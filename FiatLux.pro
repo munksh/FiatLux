@@ -17,8 +17,12 @@ CONFIG += sailfishapp
 SOURCES += src/FiatLux.cpp
 
 DISTFILES += qml/FiatLux.qml \
+    qml/CameraModel.qml \
+    qml/Storage.js \
     qml/cover/CoverPage.qml \
+    qml/pages/AddCameraPage.qml \
     qml/pages/FirstPage.qml \
+    qml/pages/MeterPage.qml \
     qml/pages/SecondPage.qml \
     rpm/FiatLux.changes.in \
     rpm/FiatLux.changes.run.in \

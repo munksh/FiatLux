@@ -1,42 +1,79 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import "../Storage.js" as Storage
 
 Page {
     id: page
+    allowedOrientations: Orientation.Portrait
 
-    // The effective value will be restricted by ApplicationWindow.allowedOrientations
-    allowedOrientations: Orientation.All
-
-    // To enable PullDownMenu, place our content in a SilicaFlickable
-    SilicaFlickable {
+    SilicaListView {
+        id: listView
         anchors.fill: parent
+        model: app.cameraModel
 
-        // PullDownMenu and PushUpMenu must be declared in SilicaFlickable, SilicaListView or SilicaGridView
+        header: PageHeader { title: "Fiat Lux" }
+
         PullDownMenu {
             MenuItem {
-                text: qsTr("Show Page 2")
-                onClicked: pageStack.animatorPush(Qt.resolvedUrl("SecondPage.qml"))
+                text: "Add Camera"
+                onClicked: pageStack.animatorPush(Qt.resolvedUrl("AddCameraPage.qml"))
+            }
+            MenuItem {
+                text: "Quick Meter"
+                onClicked: pageStack.animatorPush(Qt.resolvedUrl("MeterPage.qml"))
             }
         }
 
-        // Tell SilicaFlickable the height of its content.
-        contentHeight: column.height
+        ViewPlaceholder {
+            enabled: listView.count === 0
+            text: "Pull down to add your first camera or use Quick Meter"
+        }
 
-        // Place our content in a Column.  The PageHeader is always placed at the top
-        // of the page, followed by our content.
-        Column {
-            id: column
-
-            width: page.width
-            spacing: Theme.paddingLarge
-            PageHeader {
-                title: qsTr("UI Template")
+        delegate: ListItem {
+            menu: ContextMenu {
+                MenuItem {
+                    text: "Delete"
+                    onClicked: {
+                        Storage.deleteCamera(model.id)
+                        Storage.loadCameras(app.cameraModel)
+                    }
+                }
             }
-            Label {
+
+            onClicked: {
+                var lensesArr = JSON.parse(model.lenses)
+                var firstLens = lensesArr[0] || { name: "", apertures: "", speeds: "" }
+                var speeds = model.type === 1
+                    ? model.bodySpeeds.split(",")
+                    : firstLens.speeds.split(",")
+
+                pageStack.animatorPush(Qt.resolvedUrl("MeterPage.qml"), {
+                    "cameraName": model.name,
+                    "filmName": model.film,
+                    "iso": parseInt(model.iso),
+                    "isoLocked": true,
+                    "lens": firstLens.name,
+                    "apertures": firstLens.apertures.split(","),
+                    "shutterSpeeds": speeds
+                })
+            }
+
+            Column {
                 x: Theme.horizontalPageMargin
-                text: qsTr("Hello Sailors")
-                color: Theme.secondaryHighlightColor
-                font.pixelSize: Theme.fontSizeExtraLarge
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 2 * Theme.horizontalPageMargin
+
+                Label {
+                    text: model.name
+                    color: Theme.primaryColor
+                    font.pixelSize: Theme.fontSizeMedium
+                }
+
+                Label {
+                    text: model.film + " · ISO " + model.iso
+                    color: Theme.secondaryColor
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                }
             }
         }
     }
