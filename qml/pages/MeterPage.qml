@@ -6,7 +6,6 @@ Page {
     id: page
     allowedOrientations: Orientation.Portrait
 
-    // Profile info — passed in or defaulted
     property string cameraName: "Quick Meter"
     property string filmName: ""
     property string lens: ""
@@ -14,12 +13,12 @@ Page {
     property bool isoLocked: false
     property var apertures: ["1", "1.4", "1.7", "2", "2.8", "4", "5.6", "8", "11", "16", "22"]
     property var shutterSpeeds: ["1/1000", "1/500", "1/250", "1/125", "1/60", "1/30", "1/15", "1/8", "1/4", "1/2", "1\""]
-
-    // EV from light measurement
     property real ev: 8.0
-
-    // Whether the user is currently editing ISO
     property bool editingIso: false
+
+    property bool darkTheme: Theme.colorScheme === Theme.LightOnDark
+    property color cardColor: darkTheme ? Qt.rgba(0.08, 0.08, 0.08, 1.0) : Qt.rgba(0.96, 0.96, 0.96, 1.0)
+    property color cardBorder: Theme.rgba(Theme.primaryColor, 0.45)
 
     function parseSpeed(s) {
         if (s === "B") return null
@@ -53,7 +52,20 @@ Page {
         anchors.fill: parent
         spacing: 0
 
-        PageHeader { title: cameraName }
+        // Camera name header
+        Item {
+            width: page.width
+            height: Theme.itemSizeSmall
+
+            Label {
+                anchors.centerIn: parent
+                text: cameraName
+                color: Theme.primaryColor
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Font.DemiBold
+                font.letterSpacing: Theme.pixelRatio * 1.5
+            }
+        }
 
         // 1:1 Viewfinder
         Rectangle {
@@ -74,13 +86,26 @@ Page {
                 text: "Camera not available"
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
+                font.weight: Font.DemiBold
             }
         }
 
         // Exposure pair scroller
         Item {
             width: page.width
-            height: Theme.itemSizeLarge * 2
+            height: Theme.itemSizeLarge * 2 + Theme.paddingMedium * 2
+
+            // Card behind the scroller
+            Rectangle {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                height: parent.height - Theme.paddingMedium
+                anchors.verticalCenter: parent.verticalCenter
+                radius: Theme.paddingLarge * 1.5
+                color: page.cardColor
+                border.color: page.cardBorder
+                border.width: 2
+            }
 
             ListView {
                 id: exposureList
@@ -95,9 +120,21 @@ Page {
 
                 delegate: Item {
                     width: Theme.itemSizeHuge
-                    height: Theme.itemSizeLarge * 2
+                    height: Theme.itemSizeLarge * 2 + Theme.paddingMedium * 2
                     property bool isCenter: ListView.isCurrentItem
                     property int shutterIdx: calcShutterIndex(index)
+
+                    // Highlight behind center pair
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: parent.width - Theme.paddingSmall * 2
+                        height: parent.height - Theme.paddingLarge * 2
+                        radius: Theme.paddingLarge
+                        color: Theme.rgba(Theme.highlightColor, 0.15)
+                        border.color: Theme.rgba(Theme.highlightColor, 0.45)
+                        border.width: 1
+                        visible: isCenter
+                    }
 
                     Column {
                         anchors.centerIn: parent
@@ -108,85 +145,142 @@ Page {
                             text: shutterSpeeds[shutterIdx]
                             color: isCenter ? Theme.highlightColor : Theme.secondaryColor
                             font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                            font.bold: isCenter
+                            font.weight: isCenter ? Font.Bold : Font.DemiBold
                         }
-
                         Label {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "f/" + apertures[index]
                             color: isCenter ? Theme.primaryColor : Theme.secondaryColor
                             font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                            font.bold: isCenter
+                            font.weight: isCenter ? Font.Bold : Font.DemiBold
                         }
                     }
                 }
             }
         }
 
-        // ISO + film + lens row with lock
-        Row {
-            x: Theme.horizontalPageMargin
-            spacing: Theme.paddingMedium
-            width: page.width - 2 * Theme.horizontalPageMargin
+        Item { width: 1; height: Theme.paddingMedium }
 
-            // Lock icon — tap to toggle ISO editing
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                icon.source: editingIso
-                    ? "image://theme/icon-m-accept"
-                    : "image://theme/icon-m-edit"
-                onClicked: editingIso = !editingIso
-            }
+        // Info card — ISO, film, lens
+        Item {
+            width: page.width
+            height: infoCard.height + Theme.paddingSmall * 2
 
-            // ISO display or editor
-            Label {
-                visible: !editingIso
+            Rectangle {
+                id: infoCard
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
                 anchors.verticalCenter: parent.verticalCenter
-                text: "ISO " + iso
-                color: Theme.primaryColor
-                font.pixelSize: Theme.fontSizeSmall
-            }
+                height: infoRow.height + Theme.paddingMedium * 2
+                radius: Theme.paddingLarge * 1.5
+                color: page.cardColor
+                border.color: page.cardBorder
+                border.width: 2
 
-            TextField {
-                id: isoEditor
-                visible: editingIso
-                anchors.verticalCenter: parent.verticalCenter
-                width: Theme.itemSizeMedium
-                text: iso.toString()
-                inputMethodHints: Qt.ImhDigitsOnly
-                maximumLength: 4
-                validator: IntValidator { bottom: 1; top: 9999 }
-                onTextChanged: {
-                    var n = parseInt(text)
-                    if (!isNaN(n) && n > 0) iso = n
+                Row {
+                    id: infoRow
+                    x: Theme.paddingMedium
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.paddingSmall
+
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        icon.source: editingIso
+                            ? "image://theme/icon-m-accept"
+                            : "image://theme/icon-m-edit"
+                        onClicked: editingIso = !editingIso
+                    }
+
+                    // ISO pill / editor
+                    Rectangle {
+                        visible: !editingIso
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: height / 2
+                        color: Theme.rgba(Theme.primaryColor, 0.15)
+                        border.color: Theme.rgba(Theme.primaryColor, 0.55)
+                        border.width: 1
+                        width: isoLabel.width + Theme.paddingMedium * 2
+                        height: isoLabel.height + Theme.paddingSmall * 1.5
+                        Label {
+                            id: isoLabel
+                            anchors.centerIn: parent
+                            text: "ISO " + iso
+                            color: Theme.primaryColor
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    TextField {
+                        visible: editingIso
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Theme.itemSizeMedium
+                        text: iso.toString()
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        maximumLength: 4
+                        validator: IntValidator { bottom: 1; top: 9999 }
+                        onTextChanged: {
+                            var n = parseInt(text)
+                            if (!isNaN(n) && n > 0) iso = n
+                        }
+                    }
+
+                    // Film pill
+                    Rectangle {
+                        visible: filmName.length > 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: height / 2
+                        color: Theme.rgba(Theme.primaryColor, 0.15)
+                        border.color: Theme.rgba(Theme.primaryColor, 0.55)
+                        border.width: 1
+                        width: filmPillLabel.width + Theme.paddingMedium * 2
+                        height: filmPillLabel.height + Theme.paddingSmall * 1.5
+                        Label {
+                            id: filmPillLabel
+                            anchors.centerIn: parent
+                            text: filmName
+                            color: Theme.primaryColor
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    // Lens pill
+                    Rectangle {
+                        visible: lens.length > 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: height / 2
+                        color: Theme.rgba(Theme.primaryColor, 0.15)
+                        border.color: Theme.rgba(Theme.primaryColor, 0.55)
+                        border.width: 1
+                        width: Math.min(
+                            lensPillLabel.implicitWidth + Theme.paddingMedium * 2,
+                            page.width - 2 * Theme.horizontalPageMargin - 180
+                        )
+                        height: lensPillLabel.height + Theme.paddingSmall * 1.5
+                        Label {
+                            id: lensPillLabel
+                            anchors.centerIn: parent
+                            width: parent.width - Theme.paddingMedium * 2
+                            text: lens
+                            color: Theme.primaryColor
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.DemiBold
+                            truncationMode: TruncationMode.Fade
+                        }
+                    }
                 }
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: filmName.length > 0 ? "· " + filmName : ""
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                visible: filmName.length > 0
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: lens.length > 0 ? "· " + lens : ""
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                visible: lens.length > 0
-                truncationMode: TruncationMode.Fade
             }
         }
 
         Item { width: 1; height: Theme.paddingLarge }
 
+        // Measure button
         Button {
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Measure"
             onClicked: {
-                ev = 8.0  // real light reading goes here later
+                ev = 8.0
             }
         }
     }
