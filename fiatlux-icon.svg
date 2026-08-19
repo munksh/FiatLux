@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
+     width="86px" height="86px" viewBox="0 0 86 86" xml:space="preserve">
+
+  <defs>
+    <clipPath id="shape">
+      <path d="M84.277,0.3H43C19.417,0.3,0.3,19.418,0.3,43v41.277c0,0.786,0.637,1.423,1.423,1.423H43
+               c23.583,0,42.7-19.118,42.7-42.7V1.723C85.7,0.937,85.063,0.3,84.277,0.3z"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#shape)">
+
+    <!-- Background -->
+    <path d="M84.277,0.3H43C19.417,0.3,0.3,19.418,0.3,43v41.277c0,0.786,0.637,1.423,1.423,1.423H43
+             c23.583,0,42.7-19.118,42.7-42.7V1.723C85.7,0.937,85.063,0.3,84.277,0.3z"
+          fill="#1E1A12"/>
+
+    <!-- Dome: semicircle, centre at (43, 52), radius 28 -->
+    <path d="M15,52 A28,28 0 0,1 71,52 Z" fill="#F4EED8"/>
+
+    <!-- Elliptical rim -->
+    <ellipse cx="43" cy="52" rx="28" ry="4.5" fill="#D8CEAE"/>
+
+    <!-- Highlight arc -->
+    <path d="M22,40 Q30,28 46,24"
+          fill="none" stroke="#FFFFFF"
+          stroke-width="3.5" stroke-linecap="round" opacity="0.22"/>
+
+  </g>
+
+</svg>

@@ -1,0 +1,23 @@
+# Qt Creator / qmake
+*.pro.user
+*.pro.user.*
+Makefile
+moc_*.cpp
+qrc_*.cpp
+*.o
+*.so
+.qmake.stash
+
+# Build dirs
+build/
+build-*/
+RPMS/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store

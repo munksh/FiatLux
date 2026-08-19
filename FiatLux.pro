@@ -1,43 +1,29 @@
-# NOTICE:
-#
-# Application name defined in TARGET has a corresponding QML filename.
-# If name defined in TARGET is changed, the following needs to be done
-# to match new name:
-#   - corresponding QML filename must be changed
-#   - desktop icon filename must be changed
-#   - desktop filename must be changed
-#   - icon definition filename in desktop file must be changed
-#   - translation filenames have to be changed
-
-# The name of your application
 TARGET = FiatLux
-
 CONFIG += sailfishapp
 
 SOURCES += src/FiatLux.cpp
 
-DISTFILES += qml/FiatLux.qml \
-    qml/CameraModel.qml \
+DISTFILES += \
+    qml/FiatLux.qml \
+    qml/qmldir \
+    qml/FiatLuxTheme.qml \
     qml/Storage.js \
     qml/cover/CoverPage.qml \
-    qml/pages/AddCameraPage.qml \
-    qml/pages/FirstPage.qml \
     qml/pages/MeterPage.qml \
-    qml/pages/SecondPage.qml \
-    rpm/FiatLux.changes.in \
-    rpm/FiatLux.changes.run.in \
-    rpm/FiatLux.spec \
-    translations/*.ts \
-    FiatLux.desktop
+    qml/pages/CamerasPage.qml \
+    qml/pages/AddCameraPage.qml \
+    qml/pages/LensesPage.qml \
+    qml/pages/AddLensPage.qml \
+    qml/pages/FilmPage.qml \
+    qml/pages/AddStockPage.qml \
+    qml/pages/AddRollPage.qml \
+    qml/pages/ShotsPage.qml \
+    qml/pages/CardSection.qml \
+    qml/pages/ChooserRow.qml \
+    qml/pages/PillMenu.qml \
+    rpm/FiatLux.spec
 
-SAILFISHAPP_ICONS = 86x86 108x108 128x128 172x172
+SAILFISHAPP_ICONS = 86x86 108x108 128x128 256x256
 
-# to disable building translations every time, comment out the
-# following CONFIG line
 CONFIG += sailfishapp_i18n
-
-# German translation is enabled as an example. If you aren't
-# planning to localize your app, remember to comment out the
-# following TRANSLATIONS line. And also do not forget to
-# modify the localized app name in the the .desktop file.
-TRANSLATIONS += translations/FiatLux-de.ts
+TRANSLATIONS += translations/FiatLux-eng_en.ts

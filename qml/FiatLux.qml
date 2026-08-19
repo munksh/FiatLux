@@ -7,13 +7,24 @@ ApplicationWindow {
     id: app
 
     property ListModel cameraModel: ListModel {}
+    property ListModel lensModel:   ListModel {}
+    property ListModel stockModel:  ListModel {}
+    property ListModel rollModel:   ListModel {}
+
+    function reloadCameras() { Storage.loadCameras(cameraModel) }
+    function reloadLenses()  { Storage.loadLenses(lensModel) }
+    function reloadStocks()  { Storage.loadStocks(stockModel) }
+    function reloadRolls()   { Storage.loadRolls(rollModel, false) }
+
+    initialPage: Component { MeterPage {} }
+    cover: Qt.resolvedUrl("cover/CoverPage.qml")
+    allowedOrientations: defaultAllowedOrientations
 
     Component.onCompleted: {
         Storage.init()
-        Storage.loadCameras(cameraModel)
+        reloadCameras()
+        reloadLenses()
+        reloadStocks()
+        reloadRolls()
     }
-
-    initialPage: Component { FirstPage { } }
-    cover: Qt.resolvedUrl("cover/CoverPage.qml")
-    allowedOrientations: defaultAllowedOrientations
 }
