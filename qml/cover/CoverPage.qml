@@ -1,7 +1,7 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
 import Nemo.Configuration 1.0
-import ".."
+import ".." 1.0
 import "../components"
 
 // The cover is a reading, not a control. You metered, you liked it, you put
@@ -47,55 +47,12 @@ CoverBackground {
     }
 
     // Empty until the meter has written something. Written defensively:
-    // a dconf value can read back undefined before the key exists.
+    // a dconf value reads back undefined before the key exists.
     readonly property bool hasReading:
         lastAperture.value !== undefined && lastAperture.value !== "" &&
         lastSpeed.value !== undefined && lastSpeed.value !== ""
 
     PaperBackground { }
-
-    // ---- no reading yet: the dome, and nothing claimed ----
-
-    Canvas {
-        id: dome
-        visible: !cover.hasReading
-        anchors.centerIn: parent
-        anchors.verticalCenterOffset: -Theme.paddingLarge
-        width: 96
-        height: 58
-
-        // Canvas does not repaint when a colour it reads changes, so the
-        // colours have to be properties it can watch.
-        property color domeColor: FiatLuxTheme.accent
-        property color baseColor: Theme.rgba(FiatLuxTheme.accent, 0.55)
-        property color glintColor: Theme.rgba(FiatLuxTheme.markOn(FiatLuxTheme.accent), 0.35)
-
-        onDomeColorChanged: requestPaint()
-        onBaseColorChanged: requestPaint()
-        onGlintColorChanged: requestPaint()
-
-        onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-
-            ctx.beginPath()
-            ctx.arc(48, 58, 48, Math.PI, 0)
-            ctx.fillStyle = dome.domeColor
-            ctx.fill()
-
-            ctx.beginPath()
-            ctx.ellipse(0, 50, 96, 16)
-            ctx.fillStyle = dome.baseColor
-            ctx.fill()
-
-            ctx.beginPath()
-            ctx.arc(34, 30, 11, Math.PI * 1.1, Math.PI * 1.75)
-            ctx.strokeStyle = dome.glintColor
-            ctx.lineWidth = 4
-            ctx.lineCap = "round"
-            ctx.stroke()
-        }
-    }
 
     // ---- a reading ----
     //
@@ -148,9 +105,22 @@ CoverBackground {
         }
     }
 
-    // ---- the wordmark ----
+    // ---- nothing metered yet ----
     //
-    // Lowercase, serif, italic, same as everywhere else in the family.
+    // No illustration. The dome that used to sit here read as an egg yolk once
+    // the paper went light, and an empty cover that says nothing is better
+    // than one that says the wrong thing. After the first measurement this is
+    // never seen again.
+
+    Label {
+        visible: !cover.hasReading
+        anchors.centerIn: parent
+        text: qsTr("not metered")
+        font.pixelSize: Theme.fontSizeExtraSmall
+        color: FiatLuxTheme.secondaryText
+    }
+
+    // ---- the wordmark ----
 
     Label {
         anchors.horizontalCenter: parent.horizontalCenter

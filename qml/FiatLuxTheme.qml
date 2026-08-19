@@ -127,10 +127,17 @@ QtObject {
     // Unfilled dots, ring tracks, empty cells, anything absent.
     readonly property color dotIdle: Theme.rgba(primaryText, 0.22)
 
-    // The viewfinder, and the ONE fixed dark colour in the app. It stands in
-    // for a camera feed, so it follows neither the ambience nor Fiat colours
-    // -- a viewfinder that went cream on a light ambience would be a bug.
-    readonly property color viewfinderBg: "#111111"
+    // The viewfinder, and the only fixed colours in the app. It stands in for
+    // a camera feed, so it follows neither the ambience nor Fiat colours -- a
+    // viewfinder that went cream on a light ambience would be a bug.
+    //
+    // And because the plate is fixed dark, what is drawn ON it has to be fixed
+    // too. The HUD used the themed accent, which under a light ambience is a
+    // dark highlight: dark amber on a black viewfinder, unreadable, and only
+    // on some people's phones.
+    readonly property color viewfinderBg:     "#111111"
+    readonly property color viewfinderText:   "#F4EED8"
+    readonly property color viewfinderAccent: "#C87941"
 
     // Readable mark drawn on top of an accent fill.
     //
