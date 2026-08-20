@@ -29,42 +29,42 @@ Page {
     property bool evLocked: false
     property bool editingIso: false
     property int shotCount: 0
+
+    // Fallback only. picturesPath() asks the platform first.
     property string picturesDir: "/home/defaultuser/Pictures"
 
     // Sensor rotation for the viewfinder. Try 0 / 90 / 180 / 270 / -90.
     property int viewfinderOrientation: 0
 
-    // Light meter calibration, in stops. Adjust against a known-good meter.
-    property real evCalibration: 0.0
+    // Light meter calibration, in stops. It lives in dconf so that the
+    // calibrate page and the meter are looking at the same number and neither
+    // owns it. -3 is what this phone measured against a trusted meter in
+    // daylight, three times, five stops apart.
+    ConfigurationValue {
+        id: cfgCalibration
+        key: "/apps/harbour-fiatlux/evCalibration"
+        defaultValue: -3.0
+    }
+    readonly property real evCalibration: cfgCalibration.value
     property real lastLux: -1
 
     // ---- how the light is measured -------------------------------------
     //
-    // Two honest answers to the same question, and a real meter offers both.
-    //
     //   0  INCIDENT -- the ambient light sensor, next to the earpiece. It
-    //      measures the light FALLING ON the phone. This is what the app has
-    //      always done, and the formula is the standard one for a flat
-    //      receptor: EV100 = log2(lux / C) with C = 250, so log2(lux / 2.5).
-    //      Correct, but note where that sensor points: at YOU, not at the
-    //      subject. Hold the phone at the subject facing the camera, the way
-    //      you would hold a Sekonic with the dome on.
+    //      measures the light FALLING ON the phone: EV100 = log2(lux / C)
+    //      with C = 250, so log2(lux / 2.5). Note where that sensor points --
+    //      at YOU, not at the subject. Hold the phone at the subject facing
+    //      the camera, the way you would hold a Sekonic with the dome on.
     //
     //   1  REFLECTED -- read back from the camera's own auto-exposure. It
     //      measures the light COMING OFF the subject, which is what a TTL
-    //      meter does and what the iPhone app Caesar compares against does.
-    //      EV100 = log2(N^2 / t) - log2(S / 100), from the aperture, shutter
-    //      time and sensitivity the camera settled on.
+    //      meter does: EV100 = log2(N^2 / t) - log2(S / 100).
     //
     // They will not agree, and that is not a bug. A white wall and a black cat
-    // reflect very different amounts of the same light; incident does not care
-    // what you point it at, reflected cares about nothing else.
-    //
-    // Whether the Sailfish camera backend actually reports its exposure is not
-    // something we can know without asking it, so reflected falls back to the
-    // sensor and says so rather than quietly returning a wrong number.
-    property int meterMode: 1
+    // reflect very different amounts of the same light.
+    property int meterMode: 0
     property string meterNote: ""
+    property string reflectedRaw: ""
 
     // Where the scroller lands after a measurement — handheld default 1/125 s.
     property real preferredSpeed: 1/125
@@ -73,11 +73,6 @@ Page {
     readonly property var defaultSpeeds: ["1/1000","1/500","1/250","1/125","1/60","1/30","1/15","1/8","1/4","1/2","1\""]
 
     // ---- what the cover reads ------------------------------------------
-    //
-    // Written here, read by cover/CoverPage.qml. dconf rather than a shared
-    // object, because the cover is loaded by URL and cannot see anything
-    // declared in this file -- and because a key on disk survives a restart,
-    // which a shared object does not.
 
     ConfigurationValue { id: cfgAperture; key: "/apps/harbour-fiatlux/lastAperture"; defaultValue: "" }
     ConfigurationValue { id: cfgSpeed;    key: "/apps/harbour-fiatlux/lastSpeed";    defaultValue: "" }
@@ -220,13 +215,37 @@ Page {
     }
 
     function measureReflected() {
-        if (camera.cameraStatus !== Camera.ActiveStatus) return NaN
-        var N = camera.exposure.aperture
-        var t = camera.exposure.shutterSpeed
-        var S = camera.exposure.iso
-        console.log("reflected — N:", N, "t:", t, "S:", S)
+        page.reflectedRaw = ""
+        if (!page.cameraLive) return NaN
+
+        var N = page.cam.exposure.aperture
+        var t = page.cam.exposure.shutterSpeed
+        var S = page.cam.exposure.iso
+
+        // What the backend literally said, before anyone interprets it. This
+        // goes on screen, not just in the log, because it is the one number in
+        // the app that cannot be checked by looking at the result: a wrong EV
+        // looks exactly like a dark room.
+        page.reflectedRaw = "N " + N + " · t " + t + " · S " + S
+        console.log("reflected —", page.reflectedRaw)
+
         if (!(N > 0) || !(t > 0) || !(S > 0)) return NaN
-        return Math.log((N * N) / t) / Math.LN2 - Math.log(S / 100) / Math.LN2
+
+        // Unit guard.
+        //
+        // QtMultimedia documents shutterSpeed in SECONDS. The droid backend on
+        // this phone appears to hand back the DENOMINATOR instead -- 60 for
+        // 1/60 -- and that does not merely offset the reading, it INVERTS it:
+        // log2(N^2 / t) becomes log2(N^2 * t_real), so the brighter the scene
+        // the lower the EV comes out. Pointing at a window read darker than
+        // pointing at the room, which is how this was caught.
+        //
+        // A phone viewfinder running its own auto-exposure never sits at a
+        // whole second or longer -- it would be unwatchable. So any t at or
+        // above 1 is a denominator, not an exposure time.
+        var seconds = t >= 1 ? 1 / t : t
+
+        return Math.log((N * N) / seconds) / Math.LN2 - Math.log(S / 100) / Math.LN2
     }
 
     function measure() {
@@ -243,8 +262,9 @@ Page {
                 note = isNaN(v)
                     ? qsTr("camera reported no exposure, and no light sensor reading yet")
                     : qsTr("camera reported no exposure — fell back to the light sensor")
+                if (page.reflectedRaw !== "") note += "\n" + page.reflectedRaw
             } else {
-                note = qsTr("reflected · %1 lx unused").arg(Math.round(page.lastLux))
+                note = qsTr("reflected · %1").arg(page.reflectedRaw)
             }
         } else {
             v = measureIncident()
@@ -271,17 +291,152 @@ Page {
         return shutterSpeeds[calcShutterIndex(exposureList.currentIndex)] || "-"
     }
 
+    // ---- logging a shot --------------------------------------------------
+    //
+    // One button, and it does the whole thing: grab the frame, save it, write
+    // the row.
+    //
+    // The frame is grabbed from the VIEWFINDER ITEM, not from the camera's
+    // still capture -- which means the HUD comes with it. The aperture, the
+    // speed and the film speed are already drawn over the picture, so they are
+    // burnt in for free and they are exactly what you were looking at when you
+    // pressed. No compositing, no second code path that could disagree with
+    // the screen.
+    //
+    // It is screen resolution and not the sensor's, and that is the right
+    // trade. This is a note about what you metered. The photograph is on film.
+
+    function picturesPath() {
+        // Ask the platform; fall back to the hardcoded path if it will not say.
+        try {
+            if (typeof StandardPaths !== "undefined" && StandardPaths.pictures) {
+                var p = "" + StandardPaths.pictures
+                return p.indexOf("file://") === 0 ? p.substring(7) : p
+            }
+        } catch (e) { }
+        return page.picturesDir
+    }
+
     function logShot(photoPath) {
         if (rollId < 0) return
         Storage.addShot(rollId, new Date().toISOString(), ev,
                         currentAperture(), currentSpeed(), iso, photoPath || "")
         shotCount = Storage.shotCountForRoll(rollId)
-        shotFlash.restart()
     }
 
-    function capture() {
-        if (camera.availability !== Camera.Available) return
-        camera.imageCapture.captureToLocation(picturesDir)
+    function logShotWithFrame() {
+        var name = "fiatlux-" + new Date().toISOString().replace(/[:.]/g, "-") + ".png"
+        var path = picturesPath() + "/" + name
+
+        var started = viewfinder.grabToImage(function(result) {
+            // The flash fires AFTER the grab, never before. grabToImage
+            // renders the next frame of this item, and the flash is a cream
+            // rectangle at 0.6 opacity across the whole viewfinder -- start it
+            // first and it is in the picture. That was the entire reason the
+            // saved frames came out so much brighter than the scene.
+            shotFlash.restart()
+
+            if (result.saveToFile(path)) {
+                page.logShot(path)
+                page.meterNote = rollId >= 0
+                    ? qsTr("logged · %1").arg(name)
+                    : qsTr("saved %1 — open a roll to log it").arg(name)
+            } else {
+                page.logShot("")
+                page.meterNote = qsTr("could not write to Pictures — logged without the frame")
+            }
+        })
+
+        if (!started) {
+            shotFlash.restart()
+            page.logShot("")
+            page.meterNote = qsTr("could not grab the frame — logged without it")
+        }
+    }
+
+    // ---- the camera ------------------------------------------------------
+    //
+    // A Loader, and this is the whole fix.
+    //
+    // Sailfish's resource policy takes the camera away the moment the app goes
+    // to its cover. Asking for it back does not work: the gstreamer pipeline
+    // behind the Camera element is already dead, the element does not know it,
+    // and a cameraState assignment lands on a corpse. No error, no return
+    // value -- the viewfinder just stays black. Retrying harder does not help,
+    // because there is nothing wrong with the request; the object is spent.
+    //
+    // So do not reuse it. The Loader DESTROYS the Camera when the app loses
+    // focus and BUILDS A NEW ONE when it comes back, and a camera that was
+    // created five milliseconds ago has no memory of anyone taking anything
+    // from it. This is what Jolla's own camera app does.
+    //
+    // Everything that touches the camera goes through page.cam, which is null
+    // while the Loader is inactive -- hence the guards everywhere.
+
+    readonly property bool cameraWanted:
+        page.status === PageStatus.Active && Qt.application.state === Qt.ApplicationActive
+
+    readonly property var cam: cameraLoader.item
+
+    readonly property bool cameraLive:
+        cam !== null && cam !== undefined && cam.cameraStatus === Camera.ActiveStatus
+
+    property string cameraNote: ""
+
+    Loader {
+        id: cameraLoader
+        active: page.cameraWanted
+        sourceComponent: Camera {
+            captureMode: Camera.CaptureStillImage
+            cameraState: Camera.ActiveState
+
+            onCameraStatusChanged: {
+                if (cameraStatus === Camera.ActiveStatus) {
+                    page.cameraNote = ""
+                    page.applyFocus()
+                }
+            }
+
+            onError: {
+                console.log("camera error:", errorCode, errorString)
+                page.cameraNote = errorString
+            }
+        }
+    }
+
+    // Manual rebuild, for when it comes back wrong anyway. Tapping a black
+    // viewfinder is what everyone tries first, so let it be the thing that
+    // works. Setting `active` by hand breaks its binding, so the timer puts
+    // the binding back rather than leaving it pinned.
+    Timer {
+        id: cameraReload
+        interval: 250
+        onTriggered: cameraLoader.active = Qt.binding(function() { return page.cameraWanted })
+    }
+
+    function reloadCamera() {
+        page.cameraNote = ""
+        cameraLoader.active = false
+        cameraReload.restart()
+    }
+
+    // Only for the placeholder. A viewfinder that says "waking the camera"
+    // forever is a lie; one that says which state it is in is a bug report you
+    // can read without a laptop.
+    function cameraStatusName() {
+        if (page.cam === null || page.cam === undefined) return "no camera object"
+        switch (page.cam.cameraStatus) {
+        case Camera.UnavailableStatus: return "unavailable"
+        case Camera.UnloadedStatus:    return "unloaded"
+        case Camera.LoadingStatus:     return "loading"
+        case Camera.UnloadingStatus:   return "unloading"
+        case Camera.LoadedStatus:      return "loaded"
+        case Camera.StandbyStatus:     return "standby"
+        case Camera.StartingStatus:    return "starting"
+        case Camera.StoppingStatus:    return "stopping"
+        case Camera.ActiveStatus:      return "active"
+        default:                       return "unknown"
+        }
     }
 
     // ---- focus ----------------------------------------------------------
@@ -292,64 +447,30 @@ Page {
     // modes exist is a property of the hardware and not of QtMultimedia.
 
     function applyFocus() {
-        if (camera.cameraStatus !== Camera.ActiveStatus) return
+        if (!page.cameraLive) return
         try {
-            if (camera.focus.isFocusModeSupported(Camera.FocusContinuous)) {
-                camera.focus.focusMode = Camera.FocusContinuous
-            } else if (camera.focus.isFocusModeSupported(Camera.FocusAuto)) {
-                camera.focus.focusMode = Camera.FocusAuto
-                camera.searchAndLock()
+            if (page.cam.focus.isFocusModeSupported(Camera.FocusContinuous)) {
+                page.cam.focus.focusMode = Camera.FocusContinuous
+            } else if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto)) {
+                page.cam.focus.focusMode = Camera.FocusAuto
+                page.cam.searchAndLock()
             }
         } catch (e) { console.log("focus mode:", e) }
         try {
-            if (camera.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
-                camera.focus.focusPointMode = Camera.FocusPointAuto
+            if (page.cam.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
+                page.cam.focus.focusPointMode = Camera.FocusPointAuto
             }
         } catch (e) { console.log("focus point:", e) }
     }
 
-    // Tap the viewfinder to refocus. Continuous autofocus is not offered by
-    // every backend, so this is the manual way out and costs one MouseArea.
     function refocus() {
-        if (camera.cameraStatus !== Camera.ActiveStatus) return
+        if (!page.cameraLive) return
         try {
-            camera.unlock()
-            if (camera.focus.isFocusModeSupported(Camera.FocusAuto))
-                camera.focus.focusMode = Camera.FocusAuto
-            camera.searchAndLock()
+            page.cam.unlock()
+            if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto))
+                page.cam.focus.focusMode = Camera.FocusAuto
+            page.cam.searchAndLock()
         } catch (e) { console.log("refocus:", e) }
-    }
-
-    Camera {
-        id: camera
-        captureMode: Camera.CaptureStillImage
-
-        // THE LIFECYCLE. Without this the camera works exactly once: on a
-        // fresh deploy nobody else has claimed the device, so it comes up. The
-        // moment the app goes to its cover, Sailfish's resource policy takes
-        // the camera away and hands it to whoever asks next -- and this
-        // element never notices. It still believes it owns the device, so it
-        // asks for nothing on the way back and you get a black square with no
-        // error anywhere.
-        //
-        // UnloadedState and not LoadedState: Loaded keeps the device held,
-        // which is the very thing being argued over.
-        cameraState: page.status === PageStatus.Active
-                     && Qt.application.state === Qt.ApplicationActive
-                     ? Camera.ActiveState
-                     : Camera.UnloadedState
-
-        onCameraStatusChanged: {
-            if (cameraStatus === Camera.ActiveStatus) page.applyFocus()
-        }
-
-        imageCapture {
-            onImageSaved: {
-                shotFlash.restart()
-                page.logShot(path)
-            }
-            onCaptureFailed: console.log("capture failed:", message)
-        }
     }
 
     LightSensor {
@@ -374,6 +495,11 @@ Page {
                 text: FiatLuxTheme.ambient ? qsTr("fiat colours") : qsTr("Follow ambience")
                 color: FiatLuxTheme.primaryText
                 onClicked: FiatLuxTheme.setAmbient(!FiatLuxTheme.ambient)
+            }
+            MenuItem {
+                text: qsTr("Calibrate")
+                color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("CalibratePage.qml"))
             }
             MenuItem {
                 visible: rollId >= 0
@@ -416,9 +542,7 @@ Page {
             //
             // The wordmark and the source pill both sit ON the system
             // indicator row rather than below it. They are short and they live
-            // in the corners, so the centred cutout never reaches either --
-            // and lining them up with the system's own lights makes them read
-            // as part of that row instead of as a second, nearly-aligned one.
+            // in the corners, so the centred cutout never reaches either.
             Item {
                 width: parent.width
                 height: FiatLuxTheme.statusRowCenter + sourcePill.height / 2 + Theme.paddingMedium
@@ -483,7 +607,8 @@ Page {
             //
             // The one fixed dark surface in the app, and the one place a fixed
             // colour is right: it stands in for a camera feed. Everything
-            // drawn on it is fixed too, for the same reason.
+            // drawn on it is fixed too, for the same reason -- and because
+            // this whole rectangle is what gets saved when you log a shot.
             Rectangle {
                 id: viewfinder
                 width: page.width
@@ -493,7 +618,7 @@ Page {
 
                 VideoOutput {
                     id: vo
-                    source: camera
+                    source: page.cam
                     anchors.centerIn: parent
                     // Manual "crop to fill": overfill the square, parent clips.
                     property real ar: sourceRect.height > 0
@@ -502,26 +627,44 @@ Page {
                     height: ar >= 1 ? parent.height : parent.width / ar
                     fillMode: VideoOutput.PreserveAspectFit
                     orientation: page.viewfinderOrientation
-                    visible: camera.cameraStatus === Camera.ActiveStatus
+                    visible: page.cameraLive
                 }
 
-                // Tap anywhere in the frame to refocus.
+                // Live: refocus. Black: build a new camera. Tapping the picture
+                // is what anyone tries first in either situation, so it is
+                // worth making that the thing that works.
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: page.refocus()
+                    onClicked: page.cameraLive ? page.refocus() : page.reloadCamera()
                 }
 
-                Text {
+                Column {
                     anchors.centerIn: parent
-                    visible: camera.cameraStatus !== Camera.ActiveStatus
-                    text: camera.availability === Camera.Available
-                          ? qsTr("waking the camera")
-                          : qsTr("camera not available")
-                    color: FiatLuxTheme.viewfinderText
-                    opacity: 0.6
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: FiatLuxTheme.serif
-                    font.italic: true
+                    width: parent.width - Theme.horizontalPageMargin * 2
+                    spacing: Theme.paddingSmall
+                    visible: !page.cameraLive
+
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: qsTr("tap to wake the camera")
+                        color: FiatLuxTheme.viewfinderText
+                        opacity: 0.7
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: FiatLuxTheme.serif
+                        font.italic: true
+                    }
+
+                    // The truth, in small type.
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        text: page.cameraNote !== "" ? page.cameraNote : page.cameraStatusName()
+                        color: FiatLuxTheme.viewfinderText
+                        opacity: 0.4
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                    }
                 }
 
                 Rectangle {
@@ -731,46 +874,36 @@ Page {
                 }
             }
 
-            // ---- how to measure ----
+            // ---- what this meter is ----
             //
-            // Two pills, not a TextSwitch. This is a choice you make while
-            // looking at a scene, so it belongs next to the button and not
-            // buried in a settings page.
-            Row {
+            // Said here, at the moment of use, and not in an about page. An
+            // incident meter used like a reflected one gives a confident wrong
+            // answer, which is the worst kind, and the only defence is to name
+            // the method where the person is actually looking.
+            //
+            // The reflected pills are gone. Not hidden -- gone. This phone's
+            // camera reports t 0 and S 0, so there was never a second method
+            // to choose between; the pill offered a choice the hardware could
+            // not honour.
+            Column {
                 x: Theme.horizontalPageMargin
-                spacing: Theme.paddingMedium
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                spacing: 0
 
-                Repeater {
-                    model: [
-                        { label: qsTr("reflected"), mode: 1 },
-                        { label: qsTr("incident"),  mode: 0 }
-                    ]
-                    delegate: BackgroundItem {
-                        width: modeBg.width
-                        height: modeBg.height
-                        highlightedColor: FiatLuxTheme.highlightWash
-                        onClicked: { page.meterMode = modelData.mode; page.meterNote = "" }
-                        Rectangle {
-                            id: modeBg
-                            radius: height / 2
-                            width: modeLbl.width + Theme.paddingLarge * 2
-                            height: modeLbl.height + Theme.paddingMedium
-                            color: page.meterMode === modelData.mode
-                                   ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                            border.width: 1
-                            border.color: page.meterMode === modelData.mode
-                                          ? FiatLuxTheme.pillBorderActive : FiatLuxTheme.pillBorder
-                            Text {
-                                id: modeLbl
-                                anchors.centerIn: parent
-                                text: modelData.label
-                                font.pixelSize: Theme.fontSizeExtraSmall
-                                font.bold: true
-                                color: page.meterMode === modelData.mode
-                                       ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
-                            }
-                        }
-                    }
+                Label {
+                    width: parent.width
+                    text: qsTr("incident · point the screen at the camera")
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    font.bold: true
+                    color: FiatLuxTheme.accent
+                }
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Measured from the subject, not from the camera. Calibrated for daylight — under a lamp it reads bright.")
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    color: FiatLuxTheme.secondaryText
                 }
             }
 
@@ -810,9 +943,10 @@ Page {
                 }
             }
 
-            // What the last measurement actually did. Visible on purpose: a
-            // meter that silently substitutes one method for another is worse
-            // than one that admits it.
+            // What the last action actually did. Visible on purpose: a meter
+            // that silently substitutes one method for another is worse than
+            // one that admits it, and a log that silently drops the picture is
+            // worse than one that says the picture is missing.
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
@@ -824,65 +958,38 @@ Page {
                 color: FiatLuxTheme.secondaryText
             }
 
-            // ---- log / capture row ----
-            Row {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                spacing: Theme.paddingMedium
-
-                BackgroundItem {
-                    id: logBtn
-                    visible: rollId >= 0
-                    width: captureBtn.visible ? (parent.width - parent.spacing) / 2 : parent.width
+            // ---- log shot ----
+            //
+            // One button, one job. It was two -- "log shot" and "capture" --
+            // which asked you to decide whether this frame deserved a picture.
+            // It always does: the picture IS the log entry, with the reading
+            // already burnt into it.
+            //
+            // No icon. image://theme/ icons are drawn in the ambience's
+            // primary colour, which under Fiat colours on a dark ambience is
+            // white on a white button. The word does the job on its own.
+            BackgroundItem {
+                id: captureBtn
+                width: parent.width
+                height: Theme.itemSizeLarge
+                enabled: page.cameraLive
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: page.logShotWithFrame()
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width - 2 * Theme.horizontalPageMargin
                     height: Theme.itemSizeMedium
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: page.logShot("")
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.paddingLarge
-                        color: logBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.card
-                        border.color: FiatLuxTheme.cardBorder
-                        border.width: 1
-                        Text {
-                            anchors.centerIn: parent
-                            text: qsTr("log shot")
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif
-                            font.italic: true
-                        }
-                    }
-                }
-
-                BackgroundItem {
-                    id: captureBtn
-                    visible: camera.availability === Camera.Available
-                    width: logBtn.visible ? (parent.width - parent.spacing) / 2 : parent.width
-                    height: Theme.itemSizeMedium
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: page.capture()
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.paddingLarge
-                        color: captureBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.card
-                        border.color: FiatLuxTheme.accent
-                        border.width: 1
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: Theme.paddingSmall
-                            Image {
-                                anchors.verticalCenter: parent.verticalCenter
-                                source: "image://theme/icon-m-camera"
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: rollId >= 0 ? qsTr("capture & log") : qsTr("capture")
-                                color: FiatLuxTheme.primaryText
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: FiatLuxTheme.serif
-                                font.italic: true
-                            }
-                        }
+                    radius: Theme.paddingLarge
+                    color: captureBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.card
+                    border.color: FiatLuxTheme.accent
+                    border.width: 1
+                    Text {
+                        anchors.centerIn: parent
+                        text: qsTr("log shot")
+                        color: FiatLuxTheme.primaryText
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: FiatLuxTheme.serif
+                        font.italic: true
                     }
                 }
             }

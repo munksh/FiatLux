@@ -9,11 +9,15 @@ SOURCES += src/FiatLux.cpp
 # app dies with "FiatLuxTheme is not a type".
 DISTFILES += \
     qml/FiatLux.qml \
+    qml/components/PageHead.qml \
+    qml/pages/CalibratePage.qml \
     qml/qmldir \
     qml/FiatLuxTheme.qml \
     qml/Storage.js \
     qml/components/PaperBackground.qml \
+    qml/components/PageHead.qml \
     qml/cover/CoverPage.qml \
+    qml/pages/CalibratePage.qml \
     qml/pages/MeterPage.qml \
     qml/pages/CamerasPage.qml \
     qml/pages/AddCameraPage.qml \

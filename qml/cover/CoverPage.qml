@@ -7,12 +7,15 @@ import "../components"
 // The cover is a reading, not a control. You metered, you liked it, you put
 // the phone down -- and now you want to see it again without opening anything.
 //
+// The pair is stacked rather than written on one line with a separator. On a
+// cover the horizontal room runs out long before the vertical does, so a line
+// like "f/1.4 · 1/125" has to shrink to fit, and shrinking is the one thing
+// the two numbers you came to read must not do. Stacked, both stay large.
+//
 // The last reading is shared with the meter through dconf rather than through
-// a shared object. The cover is loaded by URL and cannot see ids declared in
-// the app's root QML, so the two need something neither has to know about.
-// A dconf key also has the useful side effect of surviving a restart: put the
-// phone down, pick it up tomorrow, and the cover still says what you settled
-// on. A context property would not do that.
+// a shared object. The cover is loaded by URL and cannot see anything declared
+// in the app's root QML, so the two need something neither has to know about.
+// A key on disk also survives a restart, which a shared object does not.
 //
 // Nothing here is tappable. No CoverAction to re-meter: metering means aiming
 // the camera at something, and you cannot aim a phone you are reading.
@@ -56,16 +59,17 @@ CoverBackground {
 
     // ---- a reading ----
     //
-    // The pair is the point, so the pair is the only large thing. The camera
-    // above it and the film below it are context: they answer "of what?" and
-    // "at what speed?", and neither is what you picked up the phone to read.
+    // Camera above, film speed below: both answer "under what conditions?"
+    // and neither is what you picked up the phone to read. The two settings
+    // in the middle are, so they are the only large things and they sit
+    // tight together as one block.
 
     Column {
         visible: cover.hasReading
         anchors.centerIn: parent
-        anchors.verticalCenterOffset: -Theme.paddingMedium
+        anchors.verticalCenterOffset: -Theme.paddingLarge
         width: parent.width - Theme.paddingMedium * 2
-        spacing: Theme.paddingSmall
+        spacing: 0
 
         Label {
             width: parent.width
@@ -74,15 +78,14 @@ CoverBackground {
             text: lastCamera.value === undefined ? "" : lastCamera.value
             font.pixelSize: Theme.fontSizeExtraSmall
             color: FiatLuxTheme.secondaryText
+            bottomPadding: Theme.paddingMedium
         }
 
         Label {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             truncationMode: TruncationMode.Fade
-            // The interpunct is doing real work: it says these two belong
-            // together and are read as one setting, not as two numbers.
-            text: "f/" + lastAperture.value + "  ·  " + lastSpeed.value
+            text: "f/" + lastAperture.value
             font.pixelSize: Theme.fontSizeLarge
             font.family: FiatLuxTheme.serif
             color: FiatLuxTheme.primaryText
@@ -92,6 +95,17 @@ CoverBackground {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             truncationMode: TruncationMode.Fade
+            text: lastSpeed.value
+            font.pixelSize: Theme.fontSizeLarge
+            font.family: FiatLuxTheme.serif
+            color: FiatLuxTheme.primaryText
+        }
+
+        Label {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            truncationMode: TruncationMode.Fade
+            topPadding: Theme.paddingMedium
             font.pixelSize: Theme.fontSizeExtraSmall
             color: FiatLuxTheme.secondaryText
             text: {
