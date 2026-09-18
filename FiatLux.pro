@@ -2,7 +2,14 @@ TARGET = FiatLux
 
 CONFIG += sailfishapp
 
-SOURCES += src/FiatLux.cpp
+QT += multimedia
+
+SOURCES += \
+    src/FiatLux.cpp \
+    src/exposureprobe.cpp
+
+HEADERS += \
+    src/exposureprobe.h
 
 # Everything listed here gets deployed to /usr/share/FiatLux/.
 # Storage.js and qmldir MUST be listed or they silently do not ship, and the

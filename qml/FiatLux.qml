@@ -1,5 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import "." 1.0
 import "pages"
 import "Storage.js" as Storage
 
@@ -20,32 +21,53 @@ ApplicationWindow {
     cover: Qt.resolvedUrl("cover/CoverPage.qml")
     allowedOrientations: defaultAllowedOrientations
 
-    // Silica's own chrome -- menus, pull-down drawers, ComboBox values,
-    // TextField labels and underlines, sliders, selection -- does not take a
-    // colour from FiatLuxTheme. It reads Theme.* directly, which is the
-    // ambience. Under Fiat colours that is light text on light paper, and no
-    // amount of `color:` on individual items fixes it, because most of those
-    // surfaces do not expose a colour property at all.
+    // `import "." 1.0` at the top is not decoration. Singletons declared in
+    // qmldir are NOT resolved by the implicit import of a file's own
+    // directory -- only by an explicit one. Without that line FiatLuxTheme was
+    // simply not defined here, and the pages worked only because they say
+    // import ".." 1.0 themselves.
+
+    // Order matters, and the try/catch is not paranoia.
     //
-    // `palette` is Silica's answer: colour roles that hang off an item and are
-    // inherited by its children. Set once here, every control in every page
-    // below follows. Do this before hunting individual `color:` properties --
-    // it is the difference between a themed app and an app with themed
-    // patches.
+    // A ReferenceError anywhere in onCompleted aborts the WHOLE block, and
+    // says nothing about what never ran. When FiatLuxTheme failed to resolve
+    // on the first line of this handler, Storage.init() silently did not
+    // happen -- an uninitialised database, with the only error message
+    // pointing at a colour palette.
+    //
+    // So: the things the app cannot work without go first, and the ones it can
+    // limp without are guarded. A missing palette is an ugly app. A missing
+    // database is no app.
     Component.onCompleted: {
-        FiatLuxTheme.applyPalette(app)
         Storage.init()
         reloadCameras()
         reloadLenses()
         reloadStocks()
         reloadRolls()
-    }
 
-    // Re-apply rather than revert. Under an ambience applyPalette feeds Silica
-    // back its own Theme.* values, so the switch round-trips cleanly without
-    // anyone having to remember the originals.
-    Connections {
-        target: FiatLuxTheme
-        onAmbientChanged: FiatLuxTheme.applyPalette(app)
+        try {
+            FiatLuxTheme.window = app
+            FiatLuxTheme.applyPalette(app)
+        } catch (e) {
+            console.log("theme not reachable from FiatLux.qml:", e)
+        }
+
+        // Asks the camera what it can actually report about its own exposure,
+        // and writes the answer to the log. QML's CameraExposure exposes the
+        // values but not the capabilities -- there is no isAvailable() and no
+        // supportedShutterSpeeds() -- so from QML the only way to find out is
+        // to read a zero and interpret it, which is guessing.
+        //
+        // Guarded on purpose: exposureProbe is a context property from C++, so
+        // it does not exist in a build without it, and a missing probe must
+        // never be the reason the app fails to start. Delete this block once
+        // the question is answered.
+        try {
+            if (typeof exposureProbe !== "undefined" && exposureProbe !== null) {
+                exposureProbe.run()
+            }
+        } catch (e2) {
+            console.log("exposure probe not available:", e2)
+        }
     }
 }

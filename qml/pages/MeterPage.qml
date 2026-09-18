@@ -24,7 +24,6 @@ Page {
     property string lens: ""
     property var apertures: []
     property var shutterSpeeds: []
-    property int scrollerGen: 0   // bump to force delegate rebuild
     property real ev: 8.0
     property bool evLocked: false
     property bool editingIso: false
@@ -36,43 +35,33 @@ Page {
     // Sensor rotation for the viewfinder. Try 0 / 90 / 180 / 270 / -90.
     property int viewfinderOrientation: 0
 
-    // Light meter calibration, in stops. It lives in dconf so that the
-    // calibrate page and the meter are looking at the same number and neither
-    // owns it. -3 is what this phone measured against a trusted meter in
-    // daylight, three times, five stops apart.
-    ConfigurationValue {
-        id: cfgCalibration
-        key: "/apps/harbour-fiatlux/evCalibration"
-        defaultValue: -3.0
-    }
-    readonly property real evCalibration: cfgCalibration.value
     property real lastLux: -1
-
-    // ---- how the light is measured -------------------------------------
-    //
-    //   0  INCIDENT -- the ambient light sensor, next to the earpiece. It
-    //      measures the light FALLING ON the phone: EV100 = log2(lux / C)
-    //      with C = 250, so log2(lux / 2.5). Note where that sensor points --
-    //      at YOU, not at the subject. Hold the phone at the subject facing
-    //      the camera, the way you would hold a Sekonic with the dome on.
-    //
-    //   1  REFLECTED -- read back from the camera's own auto-exposure. It
-    //      measures the light COMING OFF the subject, which is what a TTL
-    //      meter does: EV100 = log2(N^2 / t) - log2(S / 100).
-    //
-    // They will not agree, and that is not a bug. A white wall and a black cat
-    // reflect very different amounts of the same light.
-    property int meterMode: 0
     property string meterNote: ""
-    property string reflectedRaw: ""
 
-    // Where the scroller lands after a measurement — handheld default 1/125 s.
+    // Where the scroller lands after a measurement \u2014 handheld default 1/125 s.
     property real preferredSpeed: 1/125
 
     readonly property var defaultApertures: ["1","1.4","1.7","2","2.8","4","5.6","8","11","16","22"]
     readonly property var defaultSpeeds: ["1/1000","1/500","1/250","1/125","1/60","1/30","1/15","1/8","1/4","1/2","1\""]
 
-    // ---- what the cover reads ------------------------------------------
+    // ---- calibration -----------------------------------------------------
+    //
+    // In stops, and it lives in dconf so the calibrate page and the meter are
+    // looking at the same number and neither owns it. The guard matters: a
+    // dconf value reads back undefined before the key exists, and undefined
+    // arithmetic gives NaN, which would silently make every reading vanish.
+    ConfigurationValue {
+        id: cfgCalibration
+        key: "/apps/harbour-fiatlux/evCalibration"
+        defaultValue: -3.0
+    }
+    readonly property real evCalibration: {
+        var v = cfgCalibration.value
+        if (v === undefined || v === null) return -3.0
+        return v
+    }
+
+    // ---- what the cover reads --------------------------------------------
 
     ConfigurationValue { id: cfgAperture; key: "/apps/harbour-fiatlux/lastAperture"; defaultValue: "" }
     ConfigurationValue { id: cfgSpeed;    key: "/apps/harbour-fiatlux/lastSpeed";    defaultValue: "" }
@@ -83,26 +72,63 @@ Page {
     function publishReading() {
         // Nothing has been metered, so there is nothing to show. Publishing
         // the default 8.0 would put a number on the cover that no one chose.
-        if (!evLocked) return
-        cfgAperture.value = currentAperture()
-        cfgSpeed.value = currentSpeed()
-        cfgCamera.value = sourceLabel
-        cfgIso.value = iso
-        cfgFilm.value = rollId >= 0 ? sourceLabel : ""
+        if (!page.evLocked) return
+        cfgAperture.value = page.currentApertureText
+        cfgSpeed.value = page.currentSpeedText
+        cfgCamera.value = page.sourceLabel
+        cfgIso.value = page.iso
+        cfgFilm.value = page.rollId >= 0 ? page.sourceLabel : ""
     }
 
+    // ---- the current pair, as bindings rather than function calls ---------
+    //
+    // These used to be functions called from bindings with the dependencies
+    // smuggled in through a comma expression. That works, but it is a trick,
+    // the linter flags it as M30, and the next person to tidy it up breaks
+    // every readout in the app without a single error message.
+
+    readonly property string currentApertureText: {
+        var a = page.apertures
+        var idx = exposureList.currentIndex
+        if (!a || a.length === 0) return "-"
+        if (idx < 0 || idx >= a.length) return "-"
+        return a[idx]
+    }
+
+    readonly property int currentShutterIndex: {
+        var a = page.apertures
+        var idx = exposureList.currentIndex
+        if (!a || a.length === 0) return 0
+        if (idx < 0 || idx >= a.length) return 0
+        return page.speedIndexFor(parseFloat(a[idx]), page.ev, page.iso, page.shutterSpeeds)
+    }
+
+    readonly property string currentSpeedText: {
+        var s = page.shutterSpeeds
+        var k = page.currentShutterIndex
+        if (!s || s.length === 0) return "-"
+        if (k < 0 || k >= s.length) return "-"
+        return s[k]
+    }
+
+    // ---- loading a source -------------------------------------------------
+
     Component.onCompleted: {
-        if (rollId >= 0) loadRoll(rollId)
-        else if (presetCameraId >= 0) loadCamera(presetCameraId)
-        else loadQuick()
+        if (page.rollId >= 0) page.loadRoll(page.rollId)
+        else if (page.presetCameraId >= 0) page.loadCamera(page.presetCameraId)
+        else page.loadQuick()
     }
 
     function loadQuick() {
         rollId = -1
         sourceLabel = "Quick Meter"
-        cameraType = 0; mount = ""; bodySpeeds = ""
-        iso = 400; isoLocked = false
-        compatLenses = []; lensIndex = 0
+        cameraType = 0
+        mount = ""
+        bodySpeeds = ""
+        iso = 400
+        isoLocked = false
+        compatLenses = []
+        lensIndex = 0
         applyLens()
     }
 
@@ -113,7 +139,8 @@ Page {
         cameraType = c.type
         mount = c.mount
         bodySpeeds = c.bodySpeeds || ""
-        iso = 400; isoLocked = false
+        iso = 400
+        isoLocked = false
         compatLenses = Storage.lensesForMount(mount)
         lensIndex = 0
         applyLens()
@@ -123,15 +150,21 @@ Page {
         var r = Storage.getRoll(id)
         if (!r) { loadQuick(); return }
         rollId = id
-        sourceLabel = r.stockName !== "" ? r.stockName : (r.cameraName !== "" ? r.cameraName : "Roll")
+        sourceLabel = r.stockName !== "" ? r.stockName
+                    : (r.cameraName !== "" ? r.cameraName : "Roll")
         cameraType = r.cameraType ? r.cameraType : 0
         mount = r.mount || ""
         bodySpeeds = r.bodySpeeds || ""
-        iso = r.pushIso; isoLocked = true
+        iso = r.pushIso
+        isoLocked = true
         compatLenses = mount.length > 0 ? Storage.lensesForMount(mount) : []
         lensIndex = 0
-        for (var i = 0; i < compatLenses.length; i++)
-            if (compatLenses[i].id === r.lensId) { lensIndex = i; break }
+        for (var i = 0; i < compatLenses.length; i++) {
+            if (compatLenses[i].id === r.lensId) {
+                lensIndex = i
+                break
+            }
+        }
         applyLens()
         shotCount = Storage.shotCountForRoll(id)
     }
@@ -140,28 +173,31 @@ Page {
         if (compatLenses.length > 0) {
             var l = compatLenses[lensIndex]
             lens = l.name
-            // split() always returns a fresh array — no stale-reference problem
+            // split() always returns a fresh array -- no stale reference, and
+            // a new array identity is what makes the ListView rebuild.
             apertures = (l.apertures || "").split(",")
+
             // Speed priority:
-            //   1. Lens's own speeds (leaf / fixed lenses fill this in)
+            //   1. Lens's own speeds (leaf and fixed lenses fill this in)
             //   2. Body speeds (SLR lenses leave lens speeds empty on purpose)
-            //   3. Defaults (last resort — means data is incomplete)
-            var lSpeeds  = l.speeds    && l.speeds.length    > 0 ? l.speeds    : ""
-            var bSpeeds  = bodySpeeds  && bodySpeeds.length  > 0 ? bodySpeeds  : ""
-            var srcSpeeds = lSpeeds.length > 0 ? lSpeeds
-                          : bSpeeds.length > 0 ? bSpeeds
-                          : null
-            shutterSpeeds = srcSpeeds ? srcSpeeds.split(",") : defaultSpeeds.slice()
+            //   3. Defaults (last resort -- means the data is incomplete)
+            var lSpeeds = (l.speeds && l.speeds.length > 0) ? l.speeds : ""
+            var bSpeeds = (bodySpeeds && bodySpeeds.length > 0) ? bodySpeeds : ""
+            if (lSpeeds.length > 0) shutterSpeeds = lSpeeds.split(",")
+            else if (bSpeeds.length > 0) shutterSpeeds = bSpeeds.split(",")
+            else shutterSpeeds = defaultSpeeds.slice()
         } else {
-            // No matching lens — use defaults
-            // .slice() guarantees a new reference each time so QML sees the change
             lens = ""
             apertures = defaultApertures.slice()
             shutterSpeeds = defaultSpeeds.slice()
         }
-        // Bump generation so ListView delegates fully rebuild
-        scrollerGen++
     }
+
+    // ---- the exposure arithmetic -----------------------------------------
+    //
+    // Every input is an argument. Nothing here reads a page property, so a
+    // binding that calls one of these has already read everything it depends
+    // on in order to make the call, and QML tracks it with no tricks.
 
     function parseSpeed(s) {
         if (s === "B") return null
@@ -172,260 +208,235 @@ Page {
         return parseFloat(s.replace("\"", ""))
     }
 
-    function calcShutterIndex(apertureIndex) {
-        if (!apertures || apertures.length === 0 || !shutterSpeeds || shutterSpeeds.length === 0) return 0
-        var f = parseFloat(apertures[apertureIndex])
-        var speed = (f * f) / (Math.pow(2, ev) * (iso / 100))
-        var closest = 0, diff = Infinity
-        for (var i = 0; i < shutterSpeeds.length; i++) {
-            var sv = parseSpeed(shutterSpeeds[i])
-            if (sv === null) continue
-            // Compare in stops, not raw seconds — otherwise long speeds
-            // always look "further away" than short ones.
-            var d = Math.abs(Math.log(sv / speed) / Math.LN2)
-            if (d < diff) { diff = d; closest = i }
+    // The exact time this aperture needs, in seconds. t = N^2 / (2^EV * S/100)
+    function exactSpeedFor(apertureValue, evValue, isoValue) {
+        if (!(apertureValue > 0)) return NaN
+        return (apertureValue * apertureValue) / (Math.pow(2, evValue) * (isoValue / 100))
+    }
+
+    // Which of the camera's OWN speeds sits closest. Compared in stops, not in
+    // raw seconds -- otherwise long speeds always look further away than short
+    // ones and the meter drifts towards 1/1000 on every scene.
+    function speedIndexFor(apertureValue, evValue, isoValue, speeds) {
+        if (!speeds || speeds.length === 0) return 0
+        var wanted = exactSpeedFor(apertureValue, evValue, isoValue)
+        if (isNaN(wanted)) return 0
+        var closest = 0
+        var diff = Infinity
+        for (var i = 0; i < speeds.length; i++) {
+            var sv = parseSpeed(speeds[i])
+            if (sv === null || sv <= 0) continue
+            var d = Math.abs(Math.log(sv / wanted) / Math.LN2)
+            if (d < diff) {
+                diff = d
+                closest = i
+            }
         }
         return closest
     }
 
-    // Pick the aperture whose resulting shutter speed sits closest to
-    // preferredSpeed, measured in stops.
     function suggestIndex() {
-        if (!apertures || apertures.length === 0) return 0
-        var best = 0, diff = Infinity
-        for (var i = 0; i < apertures.length; i++) {
-            var sv = parseSpeed(shutterSpeeds[calcShutterIndex(i)])
+        var a = page.apertures
+        var s = page.shutterSpeeds
+        if (!a || a.length === 0 || !s || s.length === 0) return 0
+        var best = 0
+        var diff = Infinity
+        for (var i = 0; i < a.length; i++) {
+            var k = page.speedIndexFor(parseFloat(a[i]), page.ev, page.iso, s)
+            var sv = page.parseSpeed(s[k])
             if (sv === null || sv <= 0) continue
-            var d = Math.abs(Math.log(sv / preferredSpeed) / Math.LN2)
-            if (d < diff) { diff = d; best = i }
+            var d = Math.abs(Math.log(sv / page.preferredSpeed) / Math.LN2)
+            if (d < diff) {
+                diff = d
+                best = i
+            }
         }
         return best
     }
 
-    // ---- the two measurements ------------------------------------------
+    // ---- measuring --------------------------------------------------------
     //
-    // Both return EV at ISO 100, or NaN if they have nothing to say. NaN and
-    // not 0: zero is a real exposure value (one second at f/1 on ISO 100) and
-    // using it as "no reading" would silently meter a moonlit room.
+    // Incident, from the ambient light sensor beside the earpiece. It measures
+    // the light FALLING ON the phone, so it is held at the subject with the
+    // screen towards the camera, the way you would hold a Sekonic with the
+    // dome on -- not aimed at the subject like a camera.
+    //
+    //   EV100 = log2(lux / C), C = 250 for a flat receptor, so log2(lux / 2.5)
 
     function measureIncident() {
         var lux = page.lastLux
         if (lux === undefined || !(lux > 0)) return NaN
+        // NaN and not 0 for "nothing to say": zero is a real exposure value,
+        // one second at f/1 on ISO 100, and using it as a sentinel would
+        // silently meter a moonlit room.
         return Math.log(lux / 2.5) / Math.LN2
     }
 
-    function measureReflected() {
-        page.reflectedRaw = ""
-        if (!page.cameraLive) return NaN
-
-        var N = page.cam.exposure.aperture
-        var t = page.cam.exposure.shutterSpeed
-        var S = page.cam.exposure.iso
-
-        // What the backend literally said, before anyone interprets it. This
-        // goes on screen, not just in the log, because it is the one number in
-        // the app that cannot be checked by looking at the result: a wrong EV
-        // looks exactly like a dark room.
-        page.reflectedRaw = "N " + N + " · t " + t + " · S " + S
-        console.log("reflected —", page.reflectedRaw)
-
-        if (!(N > 0) || !(t > 0) || !(S > 0)) return NaN
-
-        // Unit guard.
-        //
-        // QtMultimedia documents shutterSpeed in SECONDS. The droid backend on
-        // this phone appears to hand back the DENOMINATOR instead -- 60 for
-        // 1/60 -- and that does not merely offset the reading, it INVERTS it:
-        // log2(N^2 / t) becomes log2(N^2 * t_real), so the brighter the scene
-        // the lower the EV comes out. Pointing at a window read darker than
-        // pointing at the room, which is how this was caught.
-        //
-        // A phone viewfinder running its own auto-exposure never sits at a
-        // whole second or longer -- it would be unwatchable. So any t at or
-        // above 1 is a denominator, not an exposure time.
-        var seconds = t >= 1 ? 1 / t : t
-
-        return Math.log((N * N) / seconds) / Math.LN2 - Math.log(S / 100) / Math.LN2
-    }
-
     function measure() {
-        var v = NaN
-        var note = ""
-
-        if (meterMode === 1) {
-            v = measureReflected()
-            if (isNaN(v)) {
-                // Not a failure worth hiding. The camera either reports its
-                // exposure or it does not, and if it does not you should know
-                // which number you are looking at.
-                v = measureIncident()
-                note = isNaN(v)
-                    ? qsTr("camera reported no exposure, and no light sensor reading yet")
-                    : qsTr("camera reported no exposure — fell back to the light sensor")
-                if (page.reflectedRaw !== "") note += "\n" + page.reflectedRaw
-            } else {
-                note = qsTr("reflected · %1").arg(page.reflectedRaw)
-            }
-        } else {
-            v = measureIncident()
-            note = isNaN(v) ? qsTr("no light sensor reading yet")
-                            : qsTr("incident · %1 lx").arg(Math.round(page.lastLux))
+        var v = page.measureIncident()
+        if (isNaN(v)) {
+            page.meterNote = qsTr("no light sensor reading yet")
+            return
         }
-
-        page.meterNote = note
-        if (isNaN(v)) return
-
-        ev = v + evCalibration
-        evLocked = true
-        exposureList.currentIndex = suggestIndex()
-        publishReading()
+        page.meterNote = qsTr("incident � %1 lx").arg(Math.round(page.lastLux))
+        page.ev = v + page.evCalibration
+        page.evLocked = true
+        exposureList.currentIndex = page.suggestIndex()
+        page.publishReading()
     }
 
-    function currentAperture() {
-        if (!apertures || apertures.length === 0) return "-"
-        return apertures[exposureList.currentIndex] || "-"
-    }
-
-    function currentSpeed() {
-        if (!shutterSpeeds || shutterSpeeds.length === 0) return "-"
-        return shutterSpeeds[calcShutterIndex(exposureList.currentIndex)] || "-"
-    }
-
-    // ---- logging a shot --------------------------------------------------
-    //
-    // One button, and it does the whole thing: grab the frame, save it, write
-    // the row.
+    // ---- logging a shot ---------------------------------------------------
     //
     // The frame is grabbed from the VIEWFINDER ITEM, not from the camera's
     // still capture -- which means the HUD comes with it. The aperture, the
     // speed and the film speed are already drawn over the picture, so they are
     // burnt in for free and they are exactly what you were looking at when you
-    // pressed. No compositing, no second code path that could disagree with
-    // the screen.
+    // pressed.
     //
     // It is screen resolution and not the sensor's, and that is the right
     // trade. This is a note about what you metered. The photograph is on film.
 
     function picturesPath() {
-        // Ask the platform; fall back to the hardcoded path if it will not say.
         try {
             if (typeof StandardPaths !== "undefined" && StandardPaths.pictures) {
                 var p = "" + StandardPaths.pictures
-                return p.indexOf("file://") === 0 ? p.substring(7) : p
+                if (p.indexOf("file://") === 0) return p.substring(7)
+                return p
             }
         } catch (e) { }
         return page.picturesDir
     }
 
     function logShot(photoPath) {
-        if (rollId < 0) return
-        Storage.addShot(rollId, new Date().toISOString(), ev,
-                        currentAperture(), currentSpeed(), iso, photoPath || "")
-        shotCount = Storage.shotCountForRoll(rollId)
+        if (page.rollId < 0) return
+        Storage.addShot(page.rollId, new Date().toISOString(), page.ev,
+                        page.currentApertureText, page.currentSpeedText,
+                        page.iso, photoPath || "")
+        page.shotCount = Storage.shotCountForRoll(page.rollId)
     }
 
     function logShotWithFrame() {
         var name = "fiatlux-" + new Date().toISOString().replace(/[:.]/g, "-") + ".png"
-        var path = picturesPath() + "/" + name
+        var path = page.picturesPath() + "/" + name
 
         var started = viewfinder.grabToImage(function(result) {
-            // The flash fires AFTER the grab, never before. grabToImage
-            // renders the next frame of this item, and the flash is a cream
-            // rectangle at 0.6 opacity across the whole viewfinder -- start it
-            // first and it is in the picture. That was the entire reason the
-            // saved frames came out so much brighter than the scene.
+            // The flash fires AFTER the grab, never before. grabToImage renders
+            // the next frame of this item, and the flash is a cream rectangle
+            // at 0.6 opacity across the whole viewfinder -- start it first and
+            // it is in the picture. That was why saved frames came out bright.
             shotFlash.restart()
 
             if (result.saveToFile(path)) {
                 page.logShot(path)
-                page.meterNote = rollId >= 0
-                    ? qsTr("logged · %1").arg(name)
-                    : qsTr("saved %1 — open a roll to log it").arg(name)
+                if (page.rollId >= 0) page.meterNote = qsTr("logged � %1").arg(name)
+                else page.meterNote = qsTr("saved %1 \u2014 open a roll to log it").arg(name)
             } else {
                 page.logShot("")
-                page.meterNote = qsTr("could not write to Pictures — logged without the frame")
+                page.meterNote = qsTr("could not write to Pictures \u2014 logged without the frame")
             }
         })
 
         if (!started) {
             shotFlash.restart()
             page.logShot("")
-            page.meterNote = qsTr("could not grab the frame — logged without it")
+            page.meterNote = qsTr("could not grab the frame \u2014 logged without it")
         }
     }
 
-    // ---- the camera ------------------------------------------------------
+    // ---- is the app actually in front of you? -----------------------------
     //
-    // A Loader, and this is the whole fix.
-    //
-    // Sailfish's resource policy takes the camera away the moment the app goes
-    // to its cover. Asking for it back does not work: the gstreamer pipeline
-    // behind the Camera element is already dead, the element does not know it,
-    // and a cameraState assignment lands on a corpse. No error, no return
-    // value -- the viewfinder just stays black. Retrying harder does not help,
-    // because there is nothing wrong with the request; the object is spent.
-    //
-    // So do not reuse it. The Loader DESTROYS the Camera when the app loses
-    // focus and BUILDS A NEW ONE when it comes back, and a camera that was
-    // created five milliseconds ago has no memory of anyone taking anything
-    // from it. This is what Jolla's own camera app does.
-    //
-    // Everything that touches the camera goes through page.cam, which is null
-    // while the Loader is inactive -- hence the guards everywhere.
+    // POLLED, not bound. Qt.application.state is correct when you read it, but
+    // on Sailfish its change signal does not reliably arrive -- a QML binding
+    // on it evaluates once, latches to whatever was true at load, and never
+    // updates again. That is one of the two faults that made the camera look
+    // unrecoverable; reading the value once a second cannot latch.
+
+    property int appState: Qt.ApplicationActive
+    property int pageState: PageStatus.Active
+    property string diag: ""
+
+    Timer {
+        id: statePoll
+        interval: 1000
+        repeat: true
+        running: true
+        onTriggered: {
+            page.appState = Qt.application.state
+            page.pageState = page.status
+            page.diag = page.cameraStatusName()
+                      + " � app " + page.appStateName()
+                      + " � page " + page.pageStatusName()
+        }
+    }
 
     readonly property bool cameraWanted:
-        page.status === PageStatus.Active && Qt.application.state === Qt.ApplicationActive
+        page.pageState === PageStatus.Active && page.appState === Qt.ApplicationActive
 
-    readonly property var cam: cameraLoader.item
-
-    readonly property bool cameraLive:
-        cam !== null && cam !== undefined && cam.cameraStatus === Camera.ActiveStatus
+    readonly property bool cameraLive: camera.cameraStatus === Camera.ActiveStatus
 
     property string cameraNote: ""
 
-    Loader {
-        id: cameraLoader
-        active: page.cameraWanted
-        sourceComponent: Camera {
-            captureMode: Camera.CaptureStillImage
-            cameraState: Camera.ActiveState
+    // ---- the camera -------------------------------------------------------
+    //
+    // Declared STATICALLY, and so is the VideoOutput below. That is not a
+    // style preference, it is the fix.
+    //
+    // This lived in a Loader that destroyed and rebuilt the Camera object. The
+    // log said exactly what that cost:
+    //
+    //     [W] Starting camera without viewfinder available
+    //     invalid handle: (nil)
+    //
+    // A Camera created inside a Loader carries cameraState: ActiveState in its
+    // own declaration, so gst-droid starts the pipeline the instant the object
+    // exists -- before VideoOutput.source has been rebound to it. gst-droid
+    // builds a pipeline with no viewfinder branch, returns null graphic
+    // buffers, and leaves the device in a state the next open inherits. The
+    // Loader was meant to recover from a stolen camera; it broke the camera
+    // instead, and permanently.
+    //
+    // Static object, static viewfinder, and only cameraState moves. The state
+    // cannot reach Active before the VideoOutput exists to receive it, because
+    // the VideoOutput was built before the page finished loading.
+    Camera {
+        id: camera
+        captureMode: Camera.CaptureStillImage
+        cameraState: page.cameraWanted ? Camera.ActiveState : Camera.UnloadedState
 
-            onCameraStatusChanged: {
-                if (cameraStatus === Camera.ActiveStatus) {
-                    page.cameraNote = ""
-                    page.applyFocus()
-                }
+        onCameraStatusChanged: {
+            if (cameraStatus === Camera.ActiveStatus) {
+                page.cameraNote = ""
+                page.applyFocus()
             }
+        }
 
-            onError: {
-                console.log("camera error:", errorCode, errorString)
-                page.cameraNote = errorString
-            }
+        onError: {
+            console.log("camera error:", errorCode, errorString)
+            page.cameraNote = errorString
         }
     }
 
-    // Manual rebuild, for when it comes back wrong anyway. Tapping a black
-    // viewfinder is what everyone tries first, so let it be the thing that
-    // works. Setting `active` by hand breaks its binding, so the timer puts
-    // the binding back rather than leaving it pinned.
+    // Manual recovery: unload, wait, and hand the binding back. No object is
+    // destroyed, so there is never a moment where the viewfinder is missing.
     Timer {
-        id: cameraReload
-        interval: 250
-        onTriggered: cameraLoader.active = Qt.binding(function() { return page.cameraWanted })
+        id: cameraKick
+        interval: 400
+        onTriggered: camera.cameraState = Qt.binding(function() {
+            return page.cameraWanted ? Camera.ActiveState : Camera.UnloadedState
+        })
     }
 
     function reloadCamera() {
         page.cameraNote = ""
-        cameraLoader.active = false
-        cameraReload.restart()
+        camera.cameraState = Camera.UnloadedState
+        cameraKick.restart()
     }
 
     // Only for the placeholder. A viewfinder that says "waking the camera"
-    // forever is a lie; one that says which state it is in is a bug report you
+    // forever is a lie; one that names the state it is in is a bug report you
     // can read without a laptop.
     function cameraStatusName() {
-        if (page.cam === null || page.cam === undefined) return "no camera object"
-        switch (page.cam.cameraStatus) {
+        switch (camera.cameraStatus) {
         case Camera.UnavailableStatus: return "unavailable"
         case Camera.UnloadedStatus:    return "unloaded"
         case Camera.LoadingStatus:     return "loading"
@@ -439,43 +450,79 @@ Page {
         }
     }
 
-    // ---- focus ----------------------------------------------------------
+    function appStateName() {
+        switch (page.appState) {
+        case Qt.ApplicationSuspended: return "suspended"
+        case Qt.ApplicationHidden:    return "hidden"
+        case Qt.ApplicationInactive:  return "inactive"
+        case Qt.ApplicationActive:    return "active"
+        default:                      return "?" + page.appState
+        }
+    }
+
+    function pageStatusName() {
+        switch (page.pageState) {
+        case PageStatus.Inactive:     return "inactive"
+        case PageStatus.Activating:   return "activating"
+        case PageStatus.Active:       return "active"
+        case PageStatus.Deactivating: return "deactivating"
+        default:                      return "?" + page.pageState
+        }
+    }
+
+    // ---- focus -------------------------------------------------------------
     //
     // Focus has to be requested AFTER the camera reaches ActiveStatus, not in
-    // the declaration -- before that there is no device to ask, and the
-    // assignment is quietly dropped. Every call is guarded, because which
-    // modes exist is a property of the hardware and not of QtMultimedia.
+    // the declaration -- before that there is no device to ask and the
+    // assignment is quietly dropped. Every call is guarded, because which modes
+    // exist is a property of the hardware and not of QtMultimedia.
 
     function applyFocus() {
         if (!page.cameraLive) return
         try {
-            if (page.cam.focus.isFocusModeSupported(Camera.FocusContinuous)) {
-                page.cam.focus.focusMode = Camera.FocusContinuous
-            } else if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto)) {
-                page.cam.focus.focusMode = Camera.FocusAuto
-                page.cam.searchAndLock()
+            if (camera.focus.isFocusModeSupported(Camera.FocusContinuous)) {
+                camera.focus.focusMode = Camera.FocusContinuous
+            } else if (camera.focus.isFocusModeSupported(Camera.FocusAuto)) {
+                camera.focus.focusMode = Camera.FocusAuto
+                camera.searchAndLock()
             }
-        } catch (e) { console.log("focus mode:", e) }
+        } catch (e) {
+            console.log("focus mode:", e)
+        }
         try {
-            if (page.cam.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
-                page.cam.focus.focusPointMode = Camera.FocusPointAuto
+            if (camera.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
+                camera.focus.focusPointMode = Camera.FocusPointAuto
             }
-        } catch (e) { console.log("focus point:", e) }
+        } catch (e2) {
+            console.log("focus point:", e2)
+        }
     }
 
     function refocus() {
         if (!page.cameraLive) return
         try {
-            page.cam.unlock()
-            if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto))
-                page.cam.focus.focusMode = Camera.FocusAuto
-            page.cam.searchAndLock()
-        } catch (e) { console.log("refocus:", e) }
+            camera.unlock()
+            if (camera.focus.isFocusModeSupported(Camera.FocusAuto)) {
+                camera.focus.focusMode = Camera.FocusAuto
+            }
+            camera.searchAndLock()
+        } catch (e) {
+            console.log("refocus:", e)
+        }
     }
 
+    // ---- the light sensor --------------------------------------------------
+    //
+    // `active` follows the polled app state, and THE TOGGLE IS THE POINT.
+    //
+    // It was `active: true` -- a constant, set once at load and never asked
+    // again. sensorfw drops the session when the device suspends, which is
+    // exactly what happens the moment the USB cable comes out and the phone is
+    // finally allowed to sleep. Nothing then re-requests it, so metering stops
+    // for good. A value that goes false and back to true asks again.
     LightSensor {
         id: lightSensor
-        active: Qt.application.state === Qt.ApplicationActive
+        active: page.appState === Qt.ApplicationActive
         onReadingChanged: page.lastLux = reading.illuminance
     }
 
@@ -502,13 +549,13 @@ Page {
                 onClicked: pageStack.push(Qt.resolvedUrl("CalibratePage.qml"))
             }
             MenuItem {
-                visible: rollId >= 0
+                visible: page.rollId >= 0
                 text: qsTr("Close roll")
                 color: FiatLuxTheme.primaryText
                 onClicked: {
-                    Storage.closeRoll(rollId)
+                    Storage.closeRoll(page.rollId)
                     app.reloadRolls()
-                    loadQuick()
+                    page.loadQuick()
                 }
             }
             MenuItem {
@@ -540,9 +587,9 @@ Page {
 
             // ---- top bar ----
             //
-            // The wordmark and the source pill both sit ON the system
-            // indicator row rather than below it. They are short and they live
-            // in the corners, so the centred cutout never reaches either.
+            // The wordmark and the source pill both sit ON the system indicator
+            // row rather than below it. They are short and they live in the
+            // corners, so the centred cutout never reaches either.
             Item {
                 width: parent.width
                 height: FiatLuxTheme.statusRowCenter + sourcePill.height / 2 + Theme.paddingMedium
@@ -571,15 +618,17 @@ Page {
                     highlightedColor: FiatLuxTheme.highlightWash
                     onClicked: {
                         var arr = ["Quick Meter"]
-                        for (var i = 0; i < app.cameraModel.count; i++)
+                        for (var i = 0; i < app.cameraModel.count; i++) {
                             arr.push(app.cameraModel.get(i).name)
+                        }
                         sourceMenu.items = arr
                         sourceMenu.show(sourcePill)
                     }
                     Rectangle {
                         anchors.fill: parent
                         radius: height / 2
-                        color: sourcePill.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
+                        color: sourcePill.highlighted ? FiatLuxTheme.pillFillActive
+                                                      : FiatLuxTheme.pillFill
                         border.color: FiatLuxTheme.pillBorderActive
                         border.width: 1
                     }
@@ -588,14 +637,16 @@ Page {
                         anchors.centerIn: parent
                         spacing: Theme.paddingSmall
                         Text {
-                            text: rollId >= 0 ? sourceLabel + " · " + shotCount + "fr" : sourceLabel
+                            text: page.rollId >= 0
+                                  ? page.sourceLabel + " � " + page.shotCount + "fr"
+                                  : page.sourceLabel
                             color: FiatLuxTheme.primaryText
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: FiatLuxTheme.serif
                             font.italic: true
                         }
                         Text {
-                            text: "▾"
+                            text: "\u25be"
                             color: FiatLuxTheme.accent
                             font.pixelSize: Theme.fontSizeSmall
                         }
@@ -606,9 +657,9 @@ Page {
             // ---- viewfinder ----
             //
             // The one fixed dark surface in the app, and the one place a fixed
-            // colour is right: it stands in for a camera feed. Everything
-            // drawn on it is fixed too, for the same reason -- and because
-            // this whole rectangle is what gets saved when you log a shot.
+            // colour is right: it stands in for a camera feed. Everything drawn
+            // on it is fixed too, for the same reason -- and because this whole
+            // rectangle is what gets saved when you log a shot.
             Rectangle {
                 id: viewfinder
                 width: page.width
@@ -616,13 +667,16 @@ Page {
                 color: FiatLuxTheme.viewfinderBg
                 clip: true
 
+                // source is the static camera id, bound at load. gst-droid must
+                // never start a pipeline before this exists.
                 VideoOutput {
                     id: vo
-                    source: page.cam
+                    source: camera
                     anchors.centerIn: parent
                     // Manual "crop to fill": overfill the square, parent clips.
                     property real ar: sourceRect.height > 0
-                                      ? sourceRect.width / sourceRect.height : 1
+                                      ? sourceRect.width / sourceRect.height
+                                      : 1
                     width:  ar >= 1 ? parent.height * ar : parent.width
                     height: ar >= 1 ? parent.height : parent.width / ar
                     fillMode: VideoOutput.PreserveAspectFit
@@ -630,12 +684,13 @@ Page {
                     visible: page.cameraLive
                 }
 
-                // Live: refocus. Black: build a new camera. Tapping the picture
-                // is what anyone tries first in either situation, so it is
-                // worth making that the thing that works.
+                // Live: refocus. Black: unload and start again.
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: page.cameraLive ? page.refocus() : page.reloadCamera()
+                    onClicked: {
+                        if (page.cameraLive) page.refocus()
+                        else page.reloadCamera()
+                    }
                 }
 
                 Column {
@@ -655,12 +710,14 @@ Page {
                         font.italic: true
                     }
 
-                    // The truth, in small type.
+                    // page.diag is refreshed by statePoll, so this line actually
+                    // updates. A function call in a binding would not, because
+                    // QML has no way to know when its answer changed.
                     Text {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
-                        text: page.cameraNote !== "" ? page.cameraNote : page.cameraStatusName()
+                        text: page.cameraNote !== "" ? page.cameraNote : page.diag
                         color: FiatLuxTheme.viewfinderText
                         opacity: 0.4
                         font.pixelSize: Theme.fontSizeExtraSmall
@@ -678,21 +735,17 @@ Page {
                         anchors.centerIn: parent
                         spacing: Theme.paddingLarge
                         Text {
-                            // Comma operator: read the dependencies, show the last value.
-                            text: (page.apertures,
-                                   exposureList.currentIndex,
-                                   "f/" + currentAperture())
+                            text: "f/" + page.currentApertureText
                             color: FiatLuxTheme.viewfinderText
                             font.pixelSize: Theme.fontSizeMedium
                         }
                         Text {
-                            text: (page.iso, page.ev, page.shutterSpeeds,
-                                   exposureList.currentIndex, currentSpeed())
+                            text: page.currentSpeedText
                             color: FiatLuxTheme.viewfinderAccent
                             font.pixelSize: Theme.fontSizeMedium
                         }
                         Text {
-                            text: "ISO " + iso
+                            text: "ISO " + page.iso
                             color: FiatLuxTheme.viewfinderText
                             font.pixelSize: Theme.fontSizeMedium
                         }
@@ -709,7 +762,9 @@ Page {
                         id: flashAnim
                         target: shotFlash
                         property: "opacity"
-                        from: 0.6; to: 0.0; duration: 350
+                        from: 0.6
+                        to: 0.0
+                        duration: 350
                     }
                 }
             }
@@ -721,8 +776,8 @@ Page {
                 height: Theme.itemSizeLarge * 2
                 radius: FiatLuxTheme.cardRadius
                 color: FiatLuxTheme.card
-                border.color: evLocked ? FiatLuxTheme.accent : FiatLuxTheme.cardBorder
-                border.width: evLocked ? FiatLuxTheme.cardBorderWidth : 1
+                border.color: page.evLocked ? FiatLuxTheme.accent : FiatLuxTheme.cardBorder
+                border.width: page.evLocked ? FiatLuxTheme.cardBorderWidth : 1
                 clip: true
 
                 ListView {
@@ -734,26 +789,36 @@ Page {
                     preferredHighlightBegin: width / 2 - Theme.itemSizeHuge / 2
                     preferredHighlightEnd:   width / 2 + Theme.itemSizeHuge / 2
                     clip: true
-                    // scrollerGen in the expression forces full delegate rebuild on camera switch
-                    model: (scrollerGen, apertures.length)
 
-                    // Whatever you land on is what the cover should show.
+                    // The array itself is the model. applyLens() always hands
+                    // over a NEW array -- split() and slice() both do -- so the
+                    // identity changes and the view rebuilds. The old code kept
+                    // a scrollerGen counter to force that; the counter was
+                    // solving a problem slice() had already solved.
+                    model: page.apertures
+
                     onCurrentIndexChanged: page.publishReading()
 
                     delegate: Item {
+                        id: card
                         width: Theme.itemSizeHuge
                         height: exposureList.height
-                        property bool isCenter: ListView.isCurrentItem
-                        // Touch every dependency directly — QML only tracks
-                        // properties read in the binding, not inside calls.
-                        property int shutterIdx: {
-                            var _g = page.scrollerGen
-                            var _i = page.iso
-                            var _e = page.ev
-                            var _a = page.apertures
-                            var _s = page.shutterSpeeds
-                            return calcShutterIndex(index)
+
+                        readonly property bool isCenter: ListView.isCurrentItem
+                        readonly property real apertureValue: parseFloat(modelData)
+
+                        readonly property int shutterIdx:
+                            page.speedIndexFor(card.apertureValue, page.ev,
+                                               page.iso, page.shutterSpeeds)
+
+                        readonly property string speedText: {
+                            var s = page.shutterSpeeds
+                            var k = card.shutterIdx
+                            if (!s || s.length === 0) return "-"
+                            if (k < 0 || k >= s.length) return "-"
+                            return s[k]
                         }
+
                         Rectangle {
                             anchors.centerIn: parent
                             width: parent.width - Theme.paddingSmall * 2
@@ -762,40 +827,43 @@ Page {
                             color: FiatLuxTheme.pillFillActive
                             border.color: FiatLuxTheme.accent
                             border.width: 1
-                            visible: isCenter
+                            visible: card.isCenter
                         }
+
                         Column {
                             anchors.centerIn: parent
                             spacing: Theme.paddingSmall
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: (shutterSpeeds && shutterSpeeds.length > shutterIdx)
-                                      ? shutterSpeeds[shutterIdx] : "-"
-                                color: isCenter ? FiatLuxTheme.accent : FiatLuxTheme.secondaryText
-                                font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                                font.bold: isCenter
+                                text: card.speedText
+                                color: card.isCenter ? FiatLuxTheme.accent
+                                                     : FiatLuxTheme.secondaryText
+                                font.pixelSize: card.isCenter ? Theme.fontSizeLarge
+                                                              : Theme.fontSizeMedium
+                                font.bold: card.isCenter
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: (apertures && apertures.length > index)
-                                      ? "f/" + apertures[index] : "-"
-                                color: isCenter ? FiatLuxTheme.primaryText : FiatLuxTheme.secondaryText
-                                font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                                font.bold: isCenter
+                                text: "f/" + modelData
+                                color: card.isCenter ? FiatLuxTheme.primaryText
+                                                     : FiatLuxTheme.secondaryText
+                                font.pixelSize: card.isCenter ? Theme.fontSizeLarge
+                                                              : Theme.fontSizeMedium
+                                font.bold: card.isCenter
                             }
                         }
                     }
                 }
             }
 
-            // ---- ISO + lens row ----
+            // ---- ISO and lens ----
             Row {
                 x: Theme.horizontalPageMargin
                 spacing: Theme.paddingMedium
 
                 BackgroundItem {
                     id: isoBtn
-                    visible: !editingIso
+                    visible: !page.editingIso
                     width: isoPillBg.width
                     height: isoPillBg.height
                     highlightedColor: FiatLuxTheme.highlightWash
@@ -803,7 +871,8 @@ Page {
                     Rectangle {
                         id: isoPillBg
                         radius: height / 2
-                        color: isoBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
+                        color: isoBtn.highlighted ? FiatLuxTheme.pillFillActive
+                                                  : FiatLuxTheme.pillFill
                         border.color: FiatLuxTheme.pillBorder
                         border.width: 1
                         width: isoLbl.width + Theme.paddingLarge * 2
@@ -811,7 +880,7 @@ Page {
                         Text {
                             id: isoLbl
                             anchors.centerIn: parent
-                            text: "ISO " + iso
+                            text: "ISO " + page.iso
                             color: FiatLuxTheme.primaryText
                             font.pixelSize: Theme.fontSizeSmall
                         }
@@ -819,43 +888,55 @@ Page {
                 }
 
                 Row {
-                    visible: editingIso
+                    visible: page.editingIso
                     spacing: Theme.paddingSmall
                     TextField {
                         id: isoEditor
                         width: Theme.itemSizeMedium
-                        text: iso.toString()
+                        text: page.iso.toString()
                         color: FiatLuxTheme.primaryText
                         inputMethodHints: Qt.ImhDigitsOnly
                         maximumLength: 5
                         validator: IntValidator { bottom: 1; top: 99999 }
-                        onTextChanged: { var n = parseInt(text); if (!isNaN(n) && n > 0) iso = n }
-                        EnterKey.onClicked: { editingIso = false; page.publishReading() }
+                        onTextChanged: {
+                            var n = parseInt(text)
+                            if (!isNaN(n) && n > 0) page.iso = n
+                        }
+                        EnterKey.onClicked: {
+                            page.editingIso = false
+                            page.publishReading()
+                        }
                     }
                     IconButton {
                         anchors.verticalCenter: parent.verticalCenter
                         icon.source: "image://theme/icon-m-accept"
-                        onClicked: { editingIso = false; page.publishReading() }
+                        onClicked: {
+                            page.editingIso = false
+                            page.publishReading()
+                        }
                     }
                 }
 
                 BackgroundItem {
                     id: lensBtn
-                    visible: lens.length > 0
+                    visible: page.lens.length > 0
                     width: lensPillBg.width
                     height: lensPillBg.height
                     highlightedColor: FiatLuxTheme.highlightWash
                     onClicked: {
-                        if (compatLenses.length <= 1) return
+                        if (page.compatLenses.length <= 1) return
                         var arr = []
-                        for (var i = 0; i < compatLenses.length; i++) arr.push(compatLenses[i].name)
+                        for (var i = 0; i < page.compatLenses.length; i++) {
+                            arr.push(page.compatLenses[i].name)
+                        }
                         lensMenu.items = arr
                         lensMenu.show(lensBtn)
                     }
                     Rectangle {
                         id: lensPillBg
                         radius: height / 2
-                        color: lensBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
+                        color: lensBtn.highlighted ? FiatLuxTheme.pillFillActive
+                                                   : FiatLuxTheme.pillFill
                         border.color: FiatLuxTheme.pillBorder
                         border.width: 1
                         width: Math.min(lensLbl.implicitWidth + Theme.paddingLarge * 2,
@@ -865,7 +946,7 @@ Page {
                             id: lensLbl
                             anchors.centerIn: parent
                             width: parent.width - Theme.paddingLarge * 2
-                            text: lens
+                            text: page.lens
                             color: FiatLuxTheme.primaryText
                             font.pixelSize: Theme.fontSizeSmall
                             elide: Text.ElideRight
@@ -878,13 +959,7 @@ Page {
             //
             // Said here, at the moment of use, and not in an about page. An
             // incident meter used like a reflected one gives a confident wrong
-            // answer, which is the worst kind, and the only defence is to name
-            // the method where the person is actually looking.
-            //
-            // The reflected pills are gone. Not hidden -- gone. This phone's
-            // camera reports t 0 and S 0, so there was never a second method
-            // to choose between; the pill offered a choice the hardware could
-            // not honour.
+            // answer, which is the worst kind.
             Column {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
@@ -892,7 +967,7 @@ Page {
 
                 Label {
                     width: parent.width
-                    text: qsTr("incident · point the screen at the camera")
+                    text: qsTr("incident � point the screen at the camera")
                     font.pixelSize: Theme.fontSizeExtraSmall
                     font.bold: true
                     color: FiatLuxTheme.accent
@@ -901,13 +976,13 @@ Page {
                 Label {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: qsTr("Measured from the subject, not from the camera. Calibrated for daylight — under a lamp it reads bright.")
+                    text: qsTr("Measured from the subject, not from the camera. Calibrated for daylight \u2014 under a lamp it reads bright.")
                     font.pixelSize: Theme.fontSizeExtraSmall
                     color: FiatLuxTheme.secondaryText
                 }
             }
 
-            // ---- measure button ----
+            // ---- measure ----
             BackgroundItem {
                 id: measureBtn
                 width: parent.width
@@ -919,34 +994,31 @@ Page {
                     height: Theme.itemSizeMedium
                     radius: Theme.paddingLarge
                     color: measureBtn.highlighted
-                           ? Qt.darker(FiatLuxTheme.accent, 1.2) : FiatLuxTheme.accent
+                           ? Qt.darker(FiatLuxTheme.accent, 1.2)
+                           : FiatLuxTheme.accent
                     Row {
                         anchors.centerIn: parent
                         spacing: Theme.paddingMedium
                         Text {
-                            text: evLocked ? qsTr("remeasure") : qsTr("measure")
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: page.evLocked ? qsTr("remeasure") : qsTr("measure")
                             color: FiatLuxTheme.markOn(FiatLuxTheme.accent)
                             font.pixelSize: Theme.fontSizeMedium
                             font.family: FiatLuxTheme.serif
                             font.italic: true
                             font.bold: true
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                         Text {
-                            visible: evLocked
-                            text: "EV " + ev.toFixed(1)
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: page.evLocked
+                            text: "EV " + page.ev.toFixed(1)
                             color: FiatLuxTheme.markOn(FiatLuxTheme.accent)
                             font.pixelSize: Theme.fontSizeSmall
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                 }
             }
 
-            // What the last action actually did. Visible on purpose: a meter
-            // that silently substitutes one method for another is worse than
-            // one that admits it, and a log that silently drops the picture is
-            // worse than one that says the picture is missing.
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
@@ -960,14 +1032,9 @@ Page {
 
             // ---- log shot ----
             //
-            // One button, one job. It was two -- "log shot" and "capture" --
-            // which asked you to decide whether this frame deserved a picture.
-            // It always does: the picture IS the log entry, with the reading
-            // already burnt into it.
-            //
-            // No icon. image://theme/ icons are drawn in the ambience's
-            // primary colour, which under Fiat colours on a dark ambience is
-            // white on a white button. The word does the job on its own.
+            // No icon. image://theme/ icons are drawn in the ambience's primary
+            // colour, which under Fiat colours on a dark ambience is white on a
+            // white button. The word does the job on its own.
             BackgroundItem {
                 id: captureBtn
                 width: parent.width
@@ -980,7 +1047,8 @@ Page {
                     width: parent.width - 2 * Theme.horizontalPageMargin
                     height: Theme.itemSizeMedium
                     radius: Theme.paddingLarge
-                    color: captureBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.card
+                    color: captureBtn.highlighted ? FiatLuxTheme.pillFillActive
+                                                  : FiatLuxTheme.card
                     border.color: FiatLuxTheme.accent
                     border.width: 1
                     Text {
@@ -1010,10 +1078,14 @@ Page {
 
     PillMenu {
         id: isoMenu
-        items: [25,50,64,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2500,3200,6400,"Custom…"]
+        items: [25,50,64,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2500,3200,6400,"Custom\u2026"]
         onPicked: function(idx) {
-            if (typeof items[idx] === "string") page.editingIso = true
-            else { page.iso = items[idx]; page.publishReading() }
+            if (typeof items[idx] === "string") {
+                page.editingIso = true
+            } else {
+                page.iso = items[idx]
+                page.publishReading()
+            }
         }
     }
 
