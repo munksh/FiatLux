@@ -1,0 +1,4 @@
+#ifndef EXPOSUREPROBE_H
+#define EXPOSUREPROBE_H
+
+#endif // EXPOSUREPROBE_H
