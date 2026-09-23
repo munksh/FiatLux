@@ -177,6 +177,14 @@ QtObject {
     // ambience highlight here, which bleeds through Fiat colours.
     readonly property color highlightWash: Theme.rgba(accent, 0.15)
 
+    // ---- cover geometry, identical in every Fiat app ----
+    readonly property real coverWordmarkTop:         Theme.paddingLarge
+    readonly property real coverSideMargin:          Theme.paddingLarge
+    readonly property real coverFigureFraction:      0.28
+    readonly property real coverFigureFractionShape: 0.20
+    readonly property int  coverFigureSize:          Theme.fontSizeHuge
+    readonly property real coverArtFraction:         0.5
+
     // ---- Silica's own chrome ----
     //
     // Menus, pull-down drawers, ComboBox values, TextField labels and

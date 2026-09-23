@@ -55,3 +55,6 @@ rust/target/
 # Python
 __pycache__/
 *.pyc
+moc_*
+qrc_*
+lux_dump.txt

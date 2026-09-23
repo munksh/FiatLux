@@ -539,7 +539,12 @@ Page {
             highlightColor: FiatLuxTheme.accent
 
             MenuItem {
-                text: FiatLuxTheme.ambient ? qsTr("fiat colours") : qsTr("Follow ambience")
+                text: qsTr("About")
+                color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("AboutPage.qml"))
+            }
+            MenuItem {
+                text: FiatLuxTheme.ambient ? qsTr("Fiat colours") : qsTr("Follow ambience")
                 color: FiatLuxTheme.primaryText
                 onClicked: FiatLuxTheme.setAmbient(!FiatLuxTheme.ambient)
             }
