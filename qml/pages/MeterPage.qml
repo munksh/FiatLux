@@ -96,6 +96,7 @@ Page {
         if (status === PageStatus.Active) {
             page.paint()
             page.refreshSources()
+            page.refreshLenses()
         }
         if (status === PageStatus.Active && !page.introChecked) {
             page.introChecked = true
@@ -203,7 +204,7 @@ Page {
         bodySpeeds = c.bodySpeeds || ""
         cameraApertures = c.apertures || ""
         compatLenses = cameraType !== 0 && mount.length > 0 ? Storage.lensesForMount(mount) : []
-        lensIndex = 0
+        lensIndex = lensIndexFor(rememberedLens(c.id))
         shotCount = 0
         applyLens()
     }
@@ -232,8 +233,53 @@ Page {
         shotCount = Storage.shotCountForRoll(id)
     }
 
+    // The lens is chosen on its own line under the camera, and remembered:
+    // on the roll when there is film in the camera, per camera when not.
+    ConfigurationValue { id: cfgCameraLens; key: "/apps/harbour-fiatlux/cameraLens"; defaultValue: "{}" }
+
+    function rememberedLens(camId) {
+        try {
+            var map = JSON.parse(cfgCameraLens.value || "{}")
+            return map["" + camId] !== undefined ? map["" + camId] : -1
+        } catch (e) {
+            return -1
+        }
+    }
+
+    function lensIndexFor(lensId) {
+        for (var i = 0; i < compatLenses.length; i++)
+            if (compatLenses[i].id === lensId) return i
+        return 0
+    }
+
     function chooseLens(i) {
+        if (i < 0 || i >= compatLenses.length) return
         lensIndex = i
+        applyLens()
+        var id = compatLenses[i].id
+        if (rollId >= 0) {
+            Storage.setRollLens(rollId, id)
+            app.reloadRolls()
+        } else if (cameraId >= 0) {
+            var map = {}
+            try { map = JSON.parse(cfgCameraLens.value || "{}") } catch (e) { map = {} }
+            map["" + cameraId] = id
+            cfgCameraLens.value = JSON.stringify(map)
+        }
+    }
+
+    // Back on the meter after adding or editing lenses: pick up the new list
+    // and keep the lens that was chosen.
+    function refreshLenses() {
+        if (cameraType === 0 || mount.length === 0) return
+        var current = compatLenses.length > 0 ? compatLenses[Math.min(lensIndex, compatLenses.length - 1)].id
+                                              : (rollId >= 0 ? -1 : rememberedLens(cameraId))
+        if (rollId >= 0 && current < 0) {
+            var r = Storage.getRoll(rollId)
+            if (r) current = r.lensId
+        }
+        compatLenses = Storage.lensesForMount(mount)
+        lensIndex = lensIndexFor(current)
         applyLens()
     }
 
@@ -469,7 +515,7 @@ Page {
                 }
             }
             MenuItem {
-                text: qsTr("Film stocks")
+                text: qsTr("Loaded film")
                 color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("FilmPage.qml"))
             }
@@ -555,7 +601,8 @@ Page {
             Rectangle {
                 id: viewfinder
                 readonly property real room: page.height - topBar.height - dial.height - readoutLabel.height
-                                             - rule.height - cameraLine.contentHeight - measureBtn.height
+                                             - rule.height - cameraLine.contentHeight
+                                             - (lensLine.visible ? lensLine.contentHeight : 0) - measureBtn.height
                                              - logBtn.height - Theme.paddingLarge * 2
                 width: Math.max(Theme.itemSizeHuge * 2, Math.min(page.width, room))
                 height: width
@@ -791,15 +838,6 @@ Page {
                             font.pixelSize: Theme.fontSizeSmall
                         }
                     }
-                    Label {
-                        visible: page.lens !== ""
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        truncationMode: TruncationMode.Fade
-                        text: page.lens
-                        color: FiatLuxTheme.secondaryText
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                    }
                 }
 
                 menu: ContextMenu {
@@ -812,19 +850,6 @@ Page {
                             onClicked: page.chooseSource(modelData.id)
                         }
                     }
-                    MenuLabel {
-                        visible: page.compatLenses.length > 1
-                        text: qsTr("lens")
-                        color: FiatLuxTheme.secondaryText
-                    }
-                    Repeater {
-                        model: page.compatLenses.length > 1 ? page.compatLenses : []
-                        MenuItem {
-                            text: modelData.name
-                            color: index === page.lensIndex ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
-                            onClicked: page.chooseLens(index)
-                        }
-                    }
                     MenuItem {
                         text: page.cameraId >= 0 && page.rollId < 0 ? qsTr("load film into %1…").arg(page.sourceLabel)
                                                                      : qsTr("load film…")
@@ -832,6 +857,56 @@ Page {
                         font.italic: true
                         font.family: FiatLuxTheme.serif
                         onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
+                    }
+                }
+            }
+
+            // ---- the lens, for a camera whose lens comes off ----
+            ListItem {
+                id: lensLine
+                visible: page.cameraType !== 0 && page.cameraId >= 0
+                width: parent.width
+                contentHeight: lensRow.height + Theme.paddingSmall * 2
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: openMenu()
+
+                Row {
+                    id: lensRow
+                    anchors.centerIn: parent
+                    spacing: Theme.paddingSmall
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, lensLine.width - Theme.horizontalPageMargin * 2 - lensCaret.width)
+                        truncationMode: TruncationMode.Fade
+                        text: page.lens !== "" ? page.lens : qsTr("no lens for %1 yet").arg(page.mount)
+                        color: FiatLuxTheme.secondaryText
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                    Label {
+                        id: lensCaret
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "\u25be"
+                        color: FiatLuxTheme.accent
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                    }
+                }
+
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: page.compatLenses
+                        MenuItem {
+                            text: modelData.name
+                            color: index === page.lensIndex ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
+                            onClicked: page.chooseLens(index)
+                        }
+                    }
+                    MenuItem {
+                        text: qsTr("add a lens\u2026")
+                        color: FiatLuxTheme.accent
+                        font.italic: true
+                        font.family: FiatLuxTheme.serif
+                        onClicked: pageStack.push(Qt.resolvedUrl("AddLensPage.qml"), { presetMount: page.mount })
                     }
                 }
             }

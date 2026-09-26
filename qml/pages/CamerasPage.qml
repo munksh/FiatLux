@@ -55,7 +55,7 @@ Page {
                 onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"))
             }
             MenuItem {
-                text: qsTr("Film stocks"); color: FiatLuxTheme.primaryText
+                text: qsTr("Loaded film"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("FilmPage.qml"))
             }
             MenuItem {

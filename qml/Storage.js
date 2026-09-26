@@ -297,6 +297,13 @@ function closeRollsForCamera(cameraId) {
     })
 }
 
+// The lens on the camera for this roll, chosen on the meter.
+function setRollLens(id, lensId) {
+    var db = getDB()
+    db.transaction(function(tx) {
+        tx.executeSql("UPDATE rolls SET lensId=? WHERE id=?", [lensId, id])
+    })
+}
 function closeRoll(id) {
     var db = getDB()
     db.transaction(function(tx) {
