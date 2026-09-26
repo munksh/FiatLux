@@ -96,6 +96,11 @@ Page {
         if (status === PageStatus.Active) {
             page.paint()
             page.refreshSources()
+            // Unloaded on Loaded film while the meter held it: the camera is
+            // empty now, so meter it as an empty camera.
+            if (page.rollId >= 0 && page.cameraId >= 0
+                    && Storage.openRollForCamera(page.cameraId) !== page.rollId)
+                page.loadCamera(page.cameraId)
             page.refreshLenses()
             if (page.rollId >= 0) page.shotCount = Storage.shotCountForRoll(page.rollId)
         }
@@ -503,23 +508,15 @@ Page {
                 onClicked: pageStack.push(Qt.resolvedUrl("CalibratePage.qml"))
             }
             MenuItem {
+                text: qsTr("History")
+                color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("HistoryPage.qml"))
+            }
+            MenuItem {
                 visible: page.rollId >= 0
                 text: qsTr("This roll")
                 color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("ShotsPage.qml"), { rollId: page.rollId })
-            }
-            MenuItem {
-                visible: page.rollId >= 0
-                text: qsTr("Unload film")
-                color: FiatLuxTheme.primaryText
-                onClicked: {
-                    var cam = page.cameraId
-                    Storage.closeRoll(page.rollId)
-                    app.reloadRolls()
-                    if (cam >= 0) page.loadCamera(cam)
-                    else page.loadQuick()
-                    page.refreshSources()
-                }
             }
             MenuItem {
                 text: qsTr("Loaded film")

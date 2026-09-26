@@ -393,6 +393,20 @@ function loadShots(model, rollId) {
     })
 }
 
+// Every frame since a moment (an ISO time, as the shots are stored), with the
+// roll, camera and film it belongs to. For the history page.
+function shotsSince(iso) {
+    var db = getDB(), out = []
+    db.transaction(function(tx) {
+        var rs = tx.executeSql("SELECT s.timestamp AS timestamp, s.rollId AS rollId, r.closed AS closed, c.name AS cameraName, st.name AS stockName FROM shots s LEFT JOIN rolls r ON s.rollId=r.id LEFT JOIN cameras c ON r.cameraId=c.id LEFT JOIN stocks st ON r.stockId=st.id WHERE s.timestamp >= ? ORDER BY s.timestamp ASC", [iso])
+        for (var i = 0; i < rs.rows.length; i++) {
+            var row = rs.rows.item(i)
+            out.push({ timestamp: row.timestamp, rollId: row.rollId, closed: row.closed ? 1 : 0,
+                       cameraName: row.cameraName || "", stockName: row.stockName || "" })
+        }
+    })
+    return out
+}
 function shotCountForRoll(rollId) {
     var db = getDB(), n = 0
     db.transaction(function(tx) {

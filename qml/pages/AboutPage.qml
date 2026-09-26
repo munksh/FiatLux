@@ -159,7 +159,7 @@ Page {
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeExtraSmall
                 color: FiatLuxTheme.secondaryText
-                text: qsTr("Everything stays on this phone. There is no account, no network access, and nothing is measured or reported.")
+                text: qsTr("Cameras, lenses, films, rolls and frames are kept in one database on this phone. The camera is used only to meter, and to take the picture when you log a shot; those pictures are saved in Pictures/FiatLux. There is no account and no network access, and nothing is reported anywhere.")
             }
 
             // -- Where it works -----------------------------------------------

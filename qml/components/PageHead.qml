@@ -46,9 +46,9 @@ Item {
             id: titleLabel
             width: parent.width
             horizontalAlignment: Text.AlignRight
-            truncationMode: TruncationMode.Fade
+            // A long title shrinks until it fits beside the cutout. No fade.
             fontSizeMode: Text.HorizontalFit
-            minimumPixelSize: Theme.fontSizeMedium
+            minimumPixelSize: Theme.fontSizeExtraSmall
             text: root.title
             // A little smaller than the wordmark, as a page title under a
             // name should be, and small enough that every title in the app
@@ -62,7 +62,7 @@ Item {
             width: parent.width
             visible: root.subtitle !== ""
             horizontalAlignment: Text.AlignRight
-            truncationMode: TruncationMode.Fade
+            wrapMode: Text.Wrap
             text: root.subtitle
             font.pixelSize: Theme.fontSizeExtraSmall
             color: FiatLuxTheme.secondaryText

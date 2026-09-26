@@ -54,6 +54,10 @@ Page {
         PullDownMenu {
             highlightColor: FiatLuxTheme.accent
             MenuItem {
+                text: qsTr("History"); color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("HistoryPage.qml"))
+            }
+            MenuItem {
                 text: qsTr("Lenses"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("LensesPage.qml"))
             }
