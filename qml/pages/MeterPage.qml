@@ -97,6 +97,7 @@ Page {
             page.paint()
             page.refreshSources()
             page.refreshLenses()
+            if (page.rollId >= 0) page.shotCount = Storage.shotCountForRoll(page.rollId)
         }
         if (status === PageStatus.Active && !page.introChecked) {
             page.introChecked = true
@@ -500,6 +501,12 @@ Page {
                 text: qsTr("Calibrate")
                 color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("CalibratePage.qml"))
+            }
+            MenuItem {
+                visible: page.rollId >= 0
+                text: qsTr("This roll")
+                color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("ShotsPage.qml"), { rollId: page.rollId })
             }
             MenuItem {
                 visible: page.rollId >= 0

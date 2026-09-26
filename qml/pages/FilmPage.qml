@@ -100,6 +100,11 @@ Page {
             menu: ContextMenu {
                 highlightColor: FiatLuxTheme.accent
                 MenuItem {
+                    text: qsTr("Frames and days")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: pageStack.push(Qt.resolvedUrl("ShotsPage.qml"), { rollId: item.rollId })
+                }
+                MenuItem {
                     text: qsTr("Meter with this film")
                     color: FiatLuxTheme.primaryText
                     onClicked: page.meterWith(item.rollId)
