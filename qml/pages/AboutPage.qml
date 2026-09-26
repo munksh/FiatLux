@@ -88,52 +88,62 @@ Page {
             }
 
             // -- The motto -------------------------------------------------
+            //
+            // Between two short hairlines, as in Mos and the rest of the
+            // family. A card around it made it look like a button.
+
+            Item { width: 1; height: Theme.paddingLarge }
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Theme.itemSizeSmall
+                height: 1
+                color: FiatLuxTheme.innerBorder
+            }
+
+            Item { width: 1; height: Theme.paddingMedium }
+
+            Column {
+                x: Theme.horizontalPageMargin
+                width: content.width - Theme.horizontalPageMargin * 2
+                spacing: Theme.paddingSmall
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: FiatLuxTheme.serif
+                    font.italic: true
+                    color: FiatLuxTheme.primaryText
+                    text: "Fiat lux. Et facta est lux."
+                }
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    color: FiatLuxTheme.secondaryText
+                    text: qsTr("Let there be light. And there was light.")
+                }
+
+                Label {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: Theme.fontSizeTiny
+                    color: FiatLuxTheme.secondaryText
+                    text: "Genesis 1:3, Vulgate"
+                }
+            }
 
             Item { width: 1; height: Theme.paddingMedium }
 
             Rectangle {
-                x: Theme.horizontalPageMargin
-                width: content.width - Theme.horizontalPageMargin * 2
-                height: mottoColumn.height + Theme.paddingLarge * 2
-                radius: FiatLuxTheme.cardRadius
-                color: FiatLuxTheme.card
-                border.color: FiatLuxTheme.cardBorder
-                border.width: FiatLuxTheme.cardBorderWidth
-
-                Column {
-                    id: mottoColumn
-                    anchors.centerIn: parent
-                    width: parent.width - Theme.paddingLarge * 2
-                    spacing: Theme.paddingSmall
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        horizontalAlignment: Text.AlignHCenter
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: FiatLuxTheme.serif
-                        font.italic: true
-                        color: FiatLuxTheme.primaryText
-                        text: "Fiat lux. Et facta est lux."
-                    }
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        horizontalAlignment: Text.AlignHCenter
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: FiatLuxTheme.secondaryText
-                        text: qsTr("Let there be light. And there was light.")
-                    }
-
-                    Label {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        font.pixelSize: Theme.fontSizeTiny
-                        color: FiatLuxTheme.secondaryText
-                        text: "Genesis 1:3, Vulgate"
-                    }
-                }
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Theme.itemSizeSmall
+                height: 1
+                color: FiatLuxTheme.innerBorder
             }
 
             // -- Privacy ---------------------------------------------------

@@ -63,6 +63,16 @@ Page {
             readonly property int itemId: model.id
             onClicked: openMenu()
 
+            // A hairline between rows, as in Mos. None under the last one.
+            Rectangle {
+                anchors.bottom: parent.bottom
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                height: 1
+                color: FiatLuxTheme.innerBorder
+                visible: index < app.stockModel.count - 1
+            }
+
             menu: ContextMenu {
                 highlightColor: FiatLuxTheme.accent
                 MenuItem {
