@@ -33,7 +33,20 @@ QtObject {
         defaultValue: true
     }
     readonly property bool ambient: ambientConfig.value
-    function setAmbient(on) { ambientConfig.value = on }
+
+    // The ApplicationWindow, handed over once at startup. Silica's palette is
+    // inherited from the window down, so somebody has to hold a reference to
+    // it -- and a Connections block watching this singleton's ambientChanged
+    // does not reliably bind on Qt 5.6. It logged "Cannot assign to
+    // non-existent property onAmbientChanged" and silently did nothing, which
+    // is why Silica's own menus and fields kept their ambience colours under
+    // Fiat colours.
+    property var window: null
+
+    function setAmbient(on) {
+        ambientConfig.value = on
+        applyPalette(window)
+    }
 
     // Fiat colours are a light scheme, so dark is false there.
     readonly property bool dark: ambient ? (Theme.colorScheme === Theme.LightOnDark) : false
@@ -89,7 +102,7 @@ QtObject {
     // Fiat Lux's accent: burnt amber, the safelight in a darkroom. It is the
     // one colour that differs from the rest of the family, and it survives the
     // move to the light paper unchanged.
-    readonly property color accent: ambient ? Theme.highlightColor : "#C87941"
+    readonly property color accent: ambient ? Theme.highlightColor : "#995A00"
 
     // ---- the shared paper ----
     readonly property color backgroundHigh: "#F2EFE8"
@@ -164,6 +177,14 @@ QtObject {
     // ambience highlight here, which bleeds through Fiat colours.
     readonly property color highlightWash: Theme.rgba(accent, 0.15)
 
+    // ---- cover geometry, identical in every Fiat app ----
+    readonly property real coverWordmarkTop:         Theme.paddingLarge
+    readonly property real coverSideMargin:          Theme.paddingLarge
+    readonly property real coverFigureFraction:      0.28
+    readonly property real coverFigureFractionShape: 0.20
+    readonly property int  coverFigureSize:          Theme.fontSizeHuge
+    readonly property real coverArtFraction:         0.5
+
     // ---- Silica's own chrome ----
     //
     // Menus, pull-down drawers, ComboBox values, TextField labels and
@@ -188,7 +209,7 @@ QtObject {
         try { p.secondaryColor = secondaryText } catch (e) { }
         try { p.highlightColor = accent } catch (e) { }
         try { p.secondaryHighlightColor = Theme.rgba(accent, 0.6) } catch (e) { }
-        try { p.highlightBackgroundColor = Theme.rgba(accent, 0.3) } catch (e) { }
+        try { p.highlightBackgroundColor = Theme.rgba(primaryText, 0.12) } catch (e) { }
         try { p.errorColor = outOfRange } catch (e) { }
         try { p.highlightDimmerColor = ambient ? Theme.highlightDimmerColor : backgroundLow } catch (e) { }
         try { p.overlayBackgroundColor = ambient ? Theme.overlayBackgroundColor : backgroundHigh } catch (e) { }

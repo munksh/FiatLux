@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=fiat lux
+Comment=Light meter for film photography
+Icon=harbour-fiatlux
+Exec=/usr/bin/sailjail -p harbour-fiatlux.desktop /usr/bin/harbour-fiatlux
+
+[X-Sailjail]
+Permissions=Camera;Pictures;Sensors
+OrganizationName=se.munkstolen
+ApplicationName=harbour-fiatlux

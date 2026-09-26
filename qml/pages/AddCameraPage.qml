@@ -1,68 +1,116 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
 import "../Storage.js" as Storage
+import "../Gear.js" as Gear
 import ".." 1.0
+import "../components"
+
+// A camera is described by the two questions a light meter needs answered:
+// can the lens come off, and if it can, is the shutter in the body or in each
+// lens. That decides where the speeds and apertures are written down.
+//
+//   fixed lens              speeds and apertures on the camera   (type 0)
+//   shutter in the body     speeds on the camera, apertures per lens (type 1)
+//   shutter in each lens    speeds and apertures per lens         (type 2)
+//
+// One line per question, each only once the one before it makes it matter.
+// A single choice is a dropdown; a list of values opens the plate.
 
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
-    background: Rectangle { color: FiatLuxTheme.deepBg }
 
-    // If editId >= 0 we're editing; else adding
     property int editId: -1
-    property var allSpeeds: ["1/1000","1/500","1/300","1/250","1/125","1/100","1/60","1/50","1/30","1/15","1/8","1/4","1/2","1\"","B"]
-    property var bodySpeeds: []
-    property int typeIndex: -1
-    property var typeLabels: ["Fixed (built-in lens)", "SLR / Rangefinder", "Leaf shutter"]
-    property var knownMounts: []
-    property int speedGen: 0   // bump to rebuild speed pills with new preselection
-    property bool canSave: typeIndex !== -1 && cameraName.text.length > 0 && mountField.text.length > 0
+
+    // -1 = not answered yet
+    property int interchangeable: -1   // 0 no, 1 yes
+    property int shutterInLens: -1     // 0 in the body, 1 in each lens
+
+    readonly property int typeIndex: {
+        if (interchangeable === 0) return 0
+        if (interchangeable === 1 && shutterInLens === 0) return 1
+        if (interchangeable === 1 && shutterInLens === 1) return 2
+        return -1
+    }
+
+    property var speeds: []
+    property var apertures: []
+    property string mount: ""
+
+    readonly property bool needsSpeeds: typeIndex === 0 || typeIndex === 1
+    readonly property bool needsApertures: typeIndex === 0
+    readonly property bool needsMount: typeIndex === 1 || typeIndex === 2
+
+    readonly property bool canSave: typeIndex !== -1
+                                    && cameraName.text.trim().length > 0
+                                    && (!needsMount || mount.length > 0)
+                                    && (!needsSpeeds || speeds.length > 0)
+                                    && (!needsApertures || apertures.length > 0)
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
 
     Component.onCompleted: {
-        knownMounts = Storage.mounts()
+        paint()
         if (editId >= 0) {
             var c = Storage.getCamera(editId)
             if (c) {
                 cameraName.text = c.name
-                mountField.text = c.mount
-                typeIndex = c.type
-                bodySpeeds = (c.bodySpeeds && c.bodySpeeds.length > 0) ? c.bodySpeeds.split(",") : []
-                speedGen++
+                mount = c.mount || ""
+                interchangeable = c.type === 0 ? 0 : 1
+                shutterInLens = c.type === 2 ? 1 : (c.type === 1 ? 0 : -1)
+                speeds = Gear.speedsForStorage(Gear.splitList(c.bodySpeeds))
+                apertures = Gear.sortApertures(Gear.splitList(c.apertures))
             }
+        }
+        syncTimer.restart()
+    }
+
+    // A ComboBox takes its index from its menu items, so it is set a beat
+    // after they exist.
+    Timer {
+        id: syncTimer
+        interval: 0
+        onTriggered: {
+            lensCombo.currentIndex = page.interchangeable
+            shutterCombo.currentIndex = page.shutterInLens
         }
     }
 
-    function isSpeedSelected(s) { return bodySpeeds.indexOf(s) !== -1 }
-
-    // Reusable pill
-    Component {
-        id: pillComponent
-        Rectangle {
-            property bool selected: false
-            property string label: ""
-            property var onToggle
-            width: pillLabel.implicitWidth + Theme.paddingLarge * 2
-            height: pillLabel.implicitHeight + Theme.paddingMedium
-            radius: height / 2
-            color: selected ? FiatLuxTheme.amberMed : "transparent"
-            border.color: selected ? FiatLuxTheme.amber : FiatLuxTheme.rim
-            border.width: selected ? 2 : 1
-            Text {
-                id: pillLabel
-                anchors.centerIn: parent
-                text: parent.label
-                color: parent.selected ? FiatLuxTheme.amber : FiatLuxTheme.primaryText
-                font.pixelSize: Theme.fontSizeSmall
-            }
-            MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                    parent.selected = !parent.selected
-                    if (parent.onToggle) parent.onToggle(parent.selected)
-                }
-            }
-        }
+    function editSpeeds() {
+        var d = pageStack.push(Qt.resolvedUrl("PlateDialog.qml"),
+                               { kind: "speeds", selected: page.speeds, owner: cameraName.text })
+        d.accepted.connect(function() { page.speeds = d.selected })
     }
+
+    function editApertures() {
+        var d = pageStack.push(Qt.resolvedUrl("PlateDialog.qml"),
+                               { kind: "apertures", selected: page.apertures, owner: cameraName.text })
+        d.accepted.connect(function() { page.apertures = d.selected })
+    }
+
+    function editMount() {
+        var p = pageStack.push(Qt.resolvedUrl("MountPage.qml"), { current: page.mount })
+        p.picked.connect(function(m) { page.mount = m })
+    }
+
+    function save() {
+        var name = cameraName.text.trim()
+        var s = page.needsSpeeds ? Gear.speedsForStorage(page.speeds).join(",") : ""
+        var a = page.needsApertures ? Gear.sortApertures(page.apertures).join(",") : ""
+        var m = page.needsMount ? page.mount : ""
+        if (page.editId >= 0)
+            Storage.updateCamera(page.editId, name, page.typeIndex, m, s, a)
+        else
+            Storage.addCamera(name, page.typeIndex, m, s, a)
+        app.reloadCameras()
+        pageStack.pop()
+    }
+
+    PaperBackground { }
 
     SilicaFlickable {
         anchors.fill: parent
@@ -71,176 +119,120 @@ Page {
         Column {
             id: column
             width: page.width
-            spacing: Theme.paddingLarge
 
-            // Clearance for the system status bar / notch
+            PageHead {
+                title: page.editId >= 0 ? qsTr("edit camera") : qsTr("add camera")
+                subtitle: "fiat lux"
+            }
+
+            TextField {
+                id: cameraName
+                width: parent.width
+                label: qsTr("Camera name")
+                placeholderText: qsTr("e.g. Yashica B")
+                color: FiatLuxTheme.primaryText
+                EnterKey.iconSource: "image://theme/icon-m-enter-close"
+                EnterKey.onClicked: focus = false
+            }
+
+            // ---- question one ----
+            ComboBox {
+                id: lensCombo
+                width: parent.width
+                label: qsTr("lens")
+                value: currentIndex < 0 ? qsTr("choose") : (currentItem ? currentItem.text : "")
+                description: page.interchangeable === 0
+                             ? qsTr("TLRs like the Yashica Mat, and most compacts, have a built-in lens.")
+                             : ""
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    MenuItem {
+                        text: qsTr("built in")
+                        color: FiatLuxTheme.primaryText
+                        onClicked: page.interchangeable = 0
+                    }
+                    MenuItem {
+                        text: qsTr("interchangeable")
+                        color: FiatLuxTheme.primaryText
+                        onClicked: page.interchangeable = 1
+                    }
+                }
+            }
+
+            // ---- question two ----
+            ComboBox {
+                id: shutterCombo
+                visible: page.interchangeable === 1
+                width: parent.width
+                label: qsTr("shutter")
+                value: currentIndex < 0 ? qsTr("choose") : (currentItem ? currentItem.text : "")
+                description: page.shutterInLens === 0
+                             ? qsTr("SLRs and most rangefinders, like the Pentax MX or a Leica M.")
+                             : page.shutterInLens === 1
+                               ? qsTr("Leaf shutters: Hasselblad V, Mamiya RB67, large format.")
+                               : ""
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    MenuItem {
+                        text: qsTr("in the body")
+                        color: FiatLuxTheme.primaryText
+                        onClicked: page.shutterInLens = 0
+                    }
+                    MenuItem {
+                        text: qsTr("in each lens")
+                        color: FiatLuxTheme.primaryText
+                        onClicked: page.shutterInLens = 1
+                    }
+                }
+            }
+
+            ValueButton {
+                visible: page.needsMount
+                width: parent.width
+                label: qsTr("mount")
+                value: page.mount !== "" ? page.mount : qsTr("choose")
+                description: qsTr("Lenses with the same mount fit this camera.")
+                onClicked: page.editMount()
+            }
+
+            ValueButton {
+                visible: page.needsSpeeds
+                width: parent.width
+                label: page.typeIndex === 0 ? qsTr("shutter speeds") : qsTr("speeds on the body")
+                value: page.speeds.length > 0 ? Gear.speedSummary(page.speeds) : qsTr("choose")
+                description: page.speeds.length > 0 ? Gear.speedCount(page.speeds) : qsTr("Only the ones on the dial.")
+                onClicked: page.editSpeeds()
+            }
+
+            ValueButton {
+                visible: page.needsApertures
+                width: parent.width
+                label: qsTr("apertures")
+                value: page.apertures.length > 0 ? Gear.apertureSummary(page.apertures) : qsTr("choose")
+                description: page.apertures.length > 0 ? Gear.apertureCount(page.apertures) : ""
+                onClicked: page.editApertures()
+            }
+
+            FormNote {
+                visible: page.typeIndex === 1 || page.typeIndex === 2
+                height: visible ? implicitHeight + Theme.paddingLarge : 0
+                verticalAlignment: Text.AlignBottom
+                text: page.typeIndex === 1
+                      ? qsTr("Apertures belong to each lens. Add them under Lenses with the same mount.")
+                      : qsTr("Each lens carries its own speeds and apertures. Add them under Lenses with the same mount.")
+            }
+
             Item { width: 1; height: Theme.paddingLarge }
 
-            Item {
-                width: parent.width; height: Theme.itemSizeLarge
-                Text {
-                    anchors.centerIn: parent
-                    text: editId >= 0 ? "edit camera" : "add camera"
-                    color: FiatLuxTheme.primaryText
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.family: FiatLuxTheme.serif
-                    font.italic: true
-                }
-            }
-
-            // Type
-            CardSection {
-                title: "camera type"
-                Text {
-                    width: parent.width
-                    text: "How are speed and aperture controlled?"
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
-                    wrapMode: Text.Wrap
-                }
-                BackgroundItem {
-                    id: typeBtn
-                    width: parent.width; height: Theme.itemSizeSmall
-                    onClicked: { typeMenu.items = page.typeLabels; typeMenu.show(typeBtn) }
-                    Rectangle {
-                        anchors.fill: parent; radius: height / 2
-                        color: typeBtn.highlighted ? FiatLuxTheme.amberMed : "transparent"
-                        border.color: FiatLuxTheme.amber; border.width: 1
-                    }
-                    Row {
-                        anchors.centerIn: parent; spacing: Theme.paddingSmall
-                        Text {
-                            text: page.typeIndex === -1 ? "tap to choose" : page.typeLabels[page.typeIndex]
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif; font.italic: true
-                        }
-                        Text { text: "▾"; color: FiatLuxTheme.amber; font.pixelSize: Theme.fontSizeSmall }
-                    }
-                }
-            }
-
-            // Name + mount
-            CardSection {
-                title: "camera"
-                TextField {
-                    id: cameraName
-                    width: parent.width
-                    placeholderText: "e.g. Pentax MX"
-                    label: "Camera name"
-                    color: FiatLuxTheme.primaryText
-                }
-                TextField {
-                    id: mountField
-                    width: parent.width
-                    placeholderText: "e.g. M42, K-mount, Yashica TLR"
-                    label: "Lens mount"
-                    color: FiatLuxTheme.primaryText
-                }
-                Flow {
-                    visible: knownMounts.length > 0
-                    width: parent.width
-                    spacing: Theme.paddingSmall
-                    Repeater {
-                        model: knownMounts
-                        delegate: BackgroundItem {
-                            width: mtag.width + Theme.paddingMedium * 2
-                            height: mtag.height + Theme.paddingSmall * 1.5
-                            onClicked: mountField.text = modelData
-                            Rectangle {
-                                anchors.fill: parent; radius: height / 2
-                                color: "transparent"
-                                border.color: FiatLuxTheme.rim; border.width: 1
-                            }
-                            Text {
-                                id: mtag; anchors.centerIn: parent; text: modelData
-                                color: FiatLuxTheme.secondaryText
-                                font.pixelSize: Theme.fontSizeExtraSmall
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Body speeds (SLR only)
-            CardSection {
-                visible: typeIndex === 1
-                title: "body shutter speeds"
-                Flow {
-                    width: parent.width; spacing: Theme.paddingSmall
-                    Repeater {
-                        model: (speedGen, allSpeeds.slice())
-                        delegate: Loader {
-                            sourceComponent: pillComponent
-                            onLoaded: {
-                                item.label = modelData
-                                item.selected = isSpeedSelected(modelData)
-                                item.onToggle = function(sel) {
-                                    if (sel) bodySpeeds.push(modelData)
-                                    else bodySpeeds = bodySpeeds.filter(function(s){ return s !== modelData })
-                                }
-                            }
-                        }
-                    }
-                }
-                Text {
-                    width: parent.width
-                    text: "Apertures live on the lens. Add lenses from the Lenses page."
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
-                    wrapMode: Text.Wrap
-                }
-            }
-
-            // Hint for non-SLR types
-            Text {
-                visible: typeIndex === 0 || typeIndex === 2
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                text: typeIndex === 0
-                      ? "This camera's built-in lens carries its own apertures and speeds. Create it on the Lenses page with the same mount."
-                      : "Leaf-shutter lenses carry both apertures and speeds. Add them on the Lenses page with the same mount."
-                color: FiatLuxTheme.secondaryText
-                font.pixelSize: Theme.fontSizeExtraSmall
-                wrapMode: Text.Wrap
-            }
-
-            // Save
-            BackgroundItem {
-                id: saveBtn
-                width: parent.width; height: Theme.itemSizeLarge
+            FiatButton {
+                text: page.editId >= 0 ? qsTr("save changes") : qsTr("save camera")
                 enabled: page.canSave
-                opacity: enabled ? 1.0 : 0.35
-                onClicked: {
-                    var speeds = (typeIndex === 1) ? bodySpeeds.join(",") : ""
-                    if (editId >= 0)
-                        Storage.updateCamera(editId, cameraName.text, typeIndex, mountField.text, speeds)
-                    else
-                        Storage.addCamera(cameraName.text, typeIndex, mountField.text, speeds)
-                    app.reloadCameras()
-                    pageStack.pop()
-                }
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium; radius: Theme.paddingLarge
-                    color: saveBtn.highlighted ? FiatLuxTheme.amberStrong : FiatLuxTheme.amber
-                    Text {
-                        anchors.centerIn: parent
-                        text: editId >= 0 ? "save changes" : "save camera"
-                        color: FiatLuxTheme.onAccent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif; font.italic: true; font.bold: true
-                    }
-                }
+                onClicked: page.save()
             }
 
             Item { width: 1; height: Theme.paddingLarge }
         }
-    }
 
-    PillMenu {
-        id: typeMenu
-        onPicked: function(idx) { page.typeIndex = idx }
+        VerticalScrollDecorator { }
     }
 }

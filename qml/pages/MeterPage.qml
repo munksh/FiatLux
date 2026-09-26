@@ -1,11 +1,15 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
-import QtMultimedia 5.0
-import QtSensors 5.2
+import se.munkstolen.fiatlux 1.0
 import Nemo.Configuration 1.0
 import "../Storage.js" as Storage
+import "../Gear.js" as Gear
 import ".." 1.0
 import "../components"
+
+// The meter. One screen that never scrolls: the viewfinder, the dial, the
+// camera, and the two buttons. It only grows when the camera's dropdown is
+// open under its line.
 
 Page {
     id: page
@@ -18,61 +22,120 @@ Page {
     property string mount: ""
     property string bodySpeeds: ""
     property int iso: 400
-    property bool isoLocked: false
     property var compatLenses: []
     property int lensIndex: 0
     property string lens: ""
     property var apertures: []
     property var shutterSpeeds: []
-    property int scrollerGen: 0   // bump to force delegate rebuild
     property real ev: 8.0
     property bool evLocked: false
-    property bool editingIso: false
     property int shotCount: 0
 
-    // Fallback only. picturesPath() asks the platform first.
-    property string picturesDir: "/home/defaultuser/Pictures"
+    // The camera being metered for (-1 = Quick Meter) and the film in it.
+    // Only Quick Meter lets you pick an ISO; a camera meters its film's.
+    property int cameraId: -1
+    property string filmLabel: ""
+    property string cameraApertures: ""
+    readonly property bool quickMeter: page.cameraId < 0
 
-    // Sensor rotation for the viewfinder. Try 0 / 90 / 180 / 270 / -90.
-    property int viewfinderOrientation: 0
+    // The aperture on the dial. The speed is the dial's own business.
+    property int apIndex: 0
+    onApIndexChanged: if (dial.apIndex !== apIndex) dial.apIndex = apIndex
 
-    // Light meter calibration, in stops. It lives in dconf so that the
-    // calibrate page and the meter are looking at the same number and neither
-    // owns it. -3 is what this phone measured against a trusted meter in
-    // daylight, three times, five stops apart.
-    ConfigurationValue {
-        id: cfgCalibration
-        key: "/apps/harbour-fiatlux/evCalibration"
-        defaultValue: -3.0
+    property var sourceChoices: []
+
+    function refreshSources() {
+        var arr = [{ id: -1, label: qsTr("Quick Meter") }]
+        for (var i = 0; i < app.cameraModel.count; i++) {
+            var c = app.cameraModel.get(i)
+            var r = Storage.openRollForCamera(c.id)
+            var film = r >= 0 ? Storage.getRoll(r) : null
+            arr.push({ id: c.id, label: film ? c.name + "  ·  " + film.stockName : c.name })
+        }
+        sourceChoices = arr
     }
-    readonly property real evCalibration: cfgCalibration.value
-    property real lastLux: -1
 
-    // ---- how the light is measured -------------------------------------
-    //
-    //   0  INCIDENT -- the ambient light sensor, next to the earpiece. It
-    //      measures the light FALLING ON the phone: EV100 = log2(lux / C)
-    //      with C = 250, so log2(lux / 2.5). Note where that sensor points --
-    //      at YOU, not at the subject. Hold the phone at the subject facing
-    //      the camera, the way you would hold a Sekonic with the dome on.
-    //
-    //   1  REFLECTED -- read back from the camera's own auto-exposure. It
-    //      measures the light COMING OFF the subject, which is what a TTL
-    //      meter does: EV100 = log2(N^2 / t) - log2(S / 100).
-    //
-    // They will not agree, and that is not a bug. A white wall and a black cat
-    // reflect very different amounts of the same light.
-    property int meterMode: 0
-    property string meterNote: ""
-    property string reflectedRaw: ""
+    // The reading stays: it is the light, not the camera. Only the pairs
+    // change, to what this camera and its film can do.
+    function chooseSource(id) {
+        if (id < 0) page.loadQuick()
+        else page.loadCamera(id)
+    }
 
-    // Where the scroller lands after a measurement — handheld default 1/125 s.
+    function chooseIso() {
+        var d = pageStack.push(Qt.resolvedUrl("PlateDialog.qml"),
+                               { kind: "iso", selected: ["" + page.iso], owner: qsTr("Quick Meter") })
+        d.accepted.connect(function() {
+            var n = parseInt(d.selected[0])
+            if (n > 0) {
+                page.iso = n
+                page.publishReading()
+            }
+        })
+    }
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
+
+    // Raise when the introduction changes enough to be worth showing again.
+    readonly property int introVersion: 2
+    property bool introChecked: false
+    ConfigurationValue { id: cfgIntro; key: "/apps/harbour-fiatlux/introVersion"; defaultValue: 0 }
+    Timer {
+        id: introTimer
+        interval: 400
+        onTriggered: {
+            if (cfgIntro.value < page.introVersion)
+                pageStack.push(Qt.resolvedUrl("IntroPage.qml"), { version: page.introVersion })
+        }
+    }
+    onStatusChanged: {
+        if (status === PageStatus.Active) {
+            page.paint()
+            page.refreshSources()
+            // Unloaded on Loaded film while the meter held it: the camera is
+            // empty now, so meter it as an empty camera.
+            if (page.rollId >= 0 && page.cameraId >= 0
+                    && Storage.openRollForCamera(page.cameraId) !== page.rollId)
+                page.loadCamera(page.cameraId)
+            page.refreshLenses()
+            if (page.rollId >= 0) page.shotCount = Storage.shotCountForRoll(page.rollId)
+        }
+        if (status === PageStatus.Active && !page.introChecked) {
+            page.introChecked = true
+            introTimer.start()
+        }
+    }
+
+    // Rotation of the Camera2 frames on screen. Try 0 / 90 / 180 / 270.
+    property int viewfinderOrientation: 90
+
+    // Where the dial lands after a measurement -- handheld, 1/125 s.
     property real preferredSpeed: 1/125
 
-    readonly property var defaultApertures: ["1","1.4","1.7","2","2.8","4","5.6","8","11","16","22"]
-    readonly property var defaultSpeeds: ["1/1000","1/500","1/250","1/125","1/60","1/30","1/15","1/8","1/4","1/2","1\""]
+    readonly property var defaultApertures: ["1", "1.4", "2", "2.8", "4", "5.6", "8", "11", "16", "22"]
+    readonly property var defaultSpeeds: ["1/1000", "1/500", "1/250", "1/125", "1/60", "1/30", "1/15", "1/8", "1/4", "1/2", "1\""]
 
-    // ---- what the cover reads ------------------------------------------
+    // ---- calibration -----------------------------------------------------
+    //
+    // In stops, in dconf, so the calibrate page and the meter read the same
+    // number. The guard matters -- a dconf value reads back undefined before
+    // the key exists, and undefined arithmetic gives NaN.
+    ConfigurationValue {
+        id: cfgCalibration
+        key: "/apps/harbour-fiatlux/evCalibrationReflected"
+        defaultValue: 4.0
+    }
+    readonly property real evCalibration: {
+        var v = cfgCalibration.value
+        if (v === undefined || v === null) return 4.0
+        return v
+    }
+
+    // ---- what the cover reads --------------------------------------------
 
     ConfigurationValue { id: cfgAperture; key: "/apps/harbour-fiatlux/lastAperture"; defaultValue: "" }
     ConfigurationValue { id: cfgSpeed;    key: "/apps/harbour-fiatlux/lastSpeed";    defaultValue: "" }
@@ -81,41 +144,74 @@ Page {
     ConfigurationValue { id: cfgFilm;     key: "/apps/harbour-fiatlux/lastFilm";     defaultValue: "" }
 
     function publishReading() {
-        // Nothing has been metered, so there is nothing to show. Publishing
-        // the default 8.0 would put a number on the cover that no one chose.
-        if (!evLocked) return
-        cfgAperture.value = currentAperture()
-        cfgSpeed.value = currentSpeed()
-        cfgCamera.value = sourceLabel
-        cfgIso.value = iso
-        cfgFilm.value = rollId >= 0 ? sourceLabel : ""
+        // Nothing has been metered, so there is nothing to show.
+        if (!page.evLocked) return
+        if (page.currentApertureText === "-" || page.currentSpeedText === "-") return
+        cfgAperture.value = page.currentApertureText
+        cfgSpeed.value = page.currentSpeedText
+        cfgCamera.value = page.sourceLabel
+        cfgIso.value = page.iso
+        cfgFilm.value = page.rollId >= 0 ? page.filmLabel : ""
     }
 
+    readonly property string currentApertureText: {
+        var a = page.apertures
+        var i = page.apIndex
+        if (!a || i < 0 || i >= a.length) return "-"
+        return a[i]
+    }
+
+    readonly property string currentSpeedText: {
+        var s = page.shutterSpeeds
+        var k = dial.pickedSpeed
+        if (!s || k < 0 || k >= s.length) return "-"
+        return s[k]
+    }
+
+    // EV at the film's speed, which is what places the speeds on the dial.
+    readonly property real evIso: page.ev + Math.log(page.iso / 100) / Math.LN2
+
+    // ---- loading a source -------------------------------------------------
+
     Component.onCompleted: {
-        if (rollId >= 0) loadRoll(rollId)
-        else if (presetCameraId >= 0) loadCamera(presetCameraId)
-        else loadQuick()
+        if (page.rollId >= 0) page.loadRoll(page.rollId)
+        else if (page.presetCameraId >= 0) page.loadCamera(page.presetCameraId)
+        else page.loadQuick()
     }
 
     function loadQuick() {
         rollId = -1
+        cameraId = -1
         sourceLabel = "Quick Meter"
-        cameraType = 0; mount = ""; bodySpeeds = ""
-        iso = 400; isoLocked = false
-        compatLenses = []; lensIndex = 0
+        filmLabel = ""
+        cameraType = 0
+        mount = ""
+        bodySpeeds = ""
+        cameraApertures = ""
+        compatLenses = []
+        lensIndex = 0
+        shotCount = 0
         applyLens()
     }
 
+    // A camera with film in it meters that film. An empty one keeps the last
+    // ISO and asks for film.
     function loadCamera(id) {
+        var open = Storage.openRollForCamera(id)
+        if (open >= 0) { loadRoll(open); return }
         var c = Storage.getCamera(id)
         if (!c) { loadQuick(); return }
+        rollId = -1
+        cameraId = c.id
         sourceLabel = c.name
+        filmLabel = ""
         cameraType = c.type
-        mount = c.mount
+        mount = c.mount || ""
         bodySpeeds = c.bodySpeeds || ""
-        iso = 400; isoLocked = false
-        compatLenses = Storage.lensesForMount(mount)
-        lensIndex = 0
+        cameraApertures = c.apertures || ""
+        compatLenses = cameraType !== 0 && mount.length > 0 ? Storage.lensesForMount(mount) : []
+        lensIndex = lensIndexFor(rememberedLens(c.id))
+        shotCount = 0
         applyLens()
     }
 
@@ -123,376 +219,286 @@ Page {
         var r = Storage.getRoll(id)
         if (!r) { loadQuick(); return }
         rollId = id
-        sourceLabel = r.stockName !== "" ? r.stockName : (r.cameraName !== "" ? r.cameraName : "Roll")
+        cameraId = r.cameraId ? r.cameraId : -1
+        sourceLabel = r.cameraName !== "" ? r.cameraName : "Quick Meter"
+        filmLabel = r.stockName
         cameraType = r.cameraType ? r.cameraType : 0
         mount = r.mount || ""
         bodySpeeds = r.bodySpeeds || ""
-        iso = r.pushIso; isoLocked = true
-        compatLenses = mount.length > 0 ? Storage.lensesForMount(mount) : []
+        cameraApertures = r.cameraApertures || ""
+        iso = r.pushIso
+        compatLenses = cameraType !== 0 && mount.length > 0 ? Storage.lensesForMount(mount) : []
         lensIndex = 0
-        for (var i = 0; i < compatLenses.length; i++)
-            if (compatLenses[i].id === r.lensId) { lensIndex = i; break }
+        for (var i = 0; i < compatLenses.length; i++) {
+            if (compatLenses[i].id === r.lensId) {
+                lensIndex = i
+                break
+            }
+        }
         applyLens()
         shotCount = Storage.shotCountForRoll(id)
     }
 
+    // The lens is chosen on its own line under the camera, and remembered:
+    // on the roll when there is film in the camera, per camera when not.
+    ConfigurationValue { id: cfgCameraLens; key: "/apps/harbour-fiatlux/cameraLens"; defaultValue: "{}" }
+
+    function rememberedLens(camId) {
+        try {
+            var map = JSON.parse(cfgCameraLens.value || "{}")
+            return map["" + camId] !== undefined ? map["" + camId] : -1
+        } catch (e) {
+            return -1
+        }
+    }
+
+    function lensIndexFor(lensId) {
+        for (var i = 0; i < compatLenses.length; i++)
+            if (compatLenses[i].id === lensId) return i
+        return 0
+    }
+
+    function chooseLens(i) {
+        if (i < 0 || i >= compatLenses.length) return
+        lensIndex = i
+        applyLens()
+        var id = compatLenses[i].id
+        if (rollId >= 0) {
+            Storage.setRollLens(rollId, id)
+            app.reloadRolls()
+        } else if (cameraId >= 0) {
+            var map = {}
+            try { map = JSON.parse(cfgCameraLens.value || "{}") } catch (e) { map = {} }
+            map["" + cameraId] = id
+            cfgCameraLens.value = JSON.stringify(map)
+        }
+    }
+
+    // Back on the meter after adding or editing lenses: pick up the new list
+    // and keep the lens that was chosen.
+    function refreshLenses() {
+        if (cameraType === 0 || mount.length === 0) return
+        var current = compatLenses.length > 0 ? compatLenses[Math.min(lensIndex, compatLenses.length - 1)].id
+                                              : (rollId >= 0 ? -1 : rememberedLens(cameraId))
+        if (rollId >= 0 && current < 0) {
+            var r = Storage.getRoll(rollId)
+            if (r) current = r.lensId
+        }
+        compatLenses = Storage.lensesForMount(mount)
+        lensIndex = lensIndexFor(current)
+        applyLens()
+    }
+
+    // Where the apertures and speeds come from:
+    //   fixed lens      both from the camera
+    //   otherwise       apertures from the lens; speeds from the lens, else
+    //                   the body, else the defaults (the data is incomplete)
     function applyLens() {
-        if (compatLenses.length > 0) {
-            var l = compatLenses[lensIndex]
-            lens = l.name
-            // split() always returns a fresh array — no stale-reference problem
-            apertures = (l.apertures || "").split(",")
-            // Speed priority:
-            //   1. Lens's own speeds (leaf / fixed lenses fill this in)
-            //   2. Body speeds (SLR lenses leave lens speeds empty on purpose)
-            //   3. Defaults (last resort — means data is incomplete)
-            var lSpeeds  = l.speeds    && l.speeds.length    > 0 ? l.speeds    : ""
-            var bSpeeds  = bodySpeeds  && bodySpeeds.length  > 0 ? bodySpeeds  : ""
-            var srcSpeeds = lSpeeds.length > 0 ? lSpeeds
-                          : bSpeeds.length > 0 ? bSpeeds
-                          : null
-            shutterSpeeds = srcSpeeds ? srcSpeeds.split(",") : defaultSpeeds.slice()
-        } else {
-            // No matching lens — use defaults
-            // .slice() guarantees a new reference each time so QML sees the change
+        var bSpeeds = Gear.splitList(bodySpeeds)
+        var ap, sp
+        if (cameraType === 0 && cameraApertures.length > 0) {
             lens = ""
-            apertures = defaultApertures.slice()
-            shutterSpeeds = defaultSpeeds.slice()
+            ap = Gear.splitList(cameraApertures)
+            sp = bSpeeds
+        } else if (compatLenses.length > 0) {
+            var l = compatLenses[Math.min(lensIndex, compatLenses.length - 1)]
+            lens = l.name
+            ap = Gear.splitList(l.apertures)
+            var lSpeeds = Gear.splitList(l.speeds)
+            sp = lSpeeds.length > 0 ? lSpeeds : bSpeeds
+        } else {
+            lens = ""
+            ap = []
+            sp = bSpeeds
         }
-        // Bump generation so ListView delegates fully rebuild
-        scrollerGen++
+        if (ap.length === 0) ap = defaultApertures.slice()
+        if (sp.length === 0) sp = defaultSpeeds.slice()
+        var oldAperture = currentApertureText
+        dial.chosenSpeed = -1
+        apertures = Gear.sortApertures(ap)
+        shutterSpeeds = Gear.speedsForStorage(sp)
+        if (evLocked) {
+            apIndex = suggestIndex()
+        } else {
+            var keep = apertures.indexOf(oldAperture)
+            apIndex = keep >= 0 ? keep : Math.max(0, apertures.indexOf("8") >= 0 ? apertures.indexOf("8")
+                                                                                   : Math.floor(apertures.length / 2))
+        }
+        publishReading()
     }
 
-    function parseSpeed(s) {
-        if (s === "B") return null
-        if (s.indexOf("/") !== -1) {
-            var p = s.split("/")
-            return parseFloat(p[0]) / parseFloat(p[1])
-        }
-        return parseFloat(s.replace("\"", ""))
-    }
+    // ---- the exposure arithmetic -----------------------------------------
 
-    function calcShutterIndex(apertureIndex) {
-        if (!apertures || apertures.length === 0 || !shutterSpeeds || shutterSpeeds.length === 0) return 0
-        var f = parseFloat(apertures[apertureIndex])
-        var speed = (f * f) / (Math.pow(2, ev) * (iso / 100))
-        var closest = 0, diff = Infinity
-        for (var i = 0; i < shutterSpeeds.length; i++) {
-            var sv = parseSpeed(shutterSpeeds[i])
-            if (sv === null) continue
-            // Compare in stops, not raw seconds — otherwise long speeds
-            // always look "further away" than short ones.
-            var d = Math.abs(Math.log(sv / speed) / Math.LN2)
-            if (d < diff) { diff = d; closest = i }
-        }
-        return closest
-    }
-
-    // Pick the aperture whose resulting shutter speed sits closest to
-    // preferredSpeed, measured in stops.
+    // The aperture whose nearest speed is closest to a handheld 1/125.
     function suggestIndex() {
-        if (!apertures || apertures.length === 0) return 0
-        var best = 0, diff = Infinity
-        for (var i = 0; i < apertures.length; i++) {
-            var sv = parseSpeed(shutterSpeeds[calcShutterIndex(i)])
-            if (sv === null || sv <= 0) continue
-            var d = Math.abs(Math.log(sv / preferredSpeed) / Math.LN2)
-            if (d < diff) { diff = d; best = i }
+        var a = page.apertures
+        var s = page.shutterSpeeds
+        if (!a || a.length === 0 || !s || s.length === 0) return 0
+        var best = 0
+        var diff = Infinity
+        for (var i = 0; i < a.length; i++) {
+            var n = parseFloat(a[i])
+            var wanted = (n * n) / Math.pow(2, page.evIso)
+            var k = -1, dk = Infinity
+            for (var j = 0; j < s.length; j++) {
+                var t = Gear.parseSpeed(s[j])
+                if (t === null || !(t > 0)) continue
+                var d0 = Math.abs(Math.log(t / wanted) / Math.LN2)
+                if (d0 < dk) { dk = d0; k = j }
+            }
+            if (k < 0) continue
+            var sv = Gear.parseSpeed(s[k])
+            // Prefer a pairing that is close to exact, then near 1/125.
+            var d = dk * 2 + Math.abs(Math.log(sv / page.preferredSpeed) / Math.LN2)
+            if (d < diff) {
+                diff = d
+                best = i
+            }
         }
         return best
     }
 
-    // ---- the two measurements ------------------------------------------
+    // ---- measuring --------------------------------------------------------
     //
-    // Both return EV at ISO 100, or NaN if they have nothing to say. NaN and
-    // not 0: zero is a real exposure value (one second at f/1 on ISO 100) and
-    // using it as "no reading" would silently meter a moonlit room.
-
-    function measureIncident() {
-        var lux = page.lastLux
-        if (lux === undefined || !(lux > 0)) return NaN
-        return Math.log(lux / 2.5) / Math.LN2
-    }
-
-    function measureReflected() {
-        page.reflectedRaw = ""
-        if (!page.cameraLive) return NaN
-
-        var N = page.cam.exposure.aperture
-        var t = page.cam.exposure.shutterSpeed
-        var S = page.cam.exposure.iso
-
-        // What the backend literally said, before anyone interprets it. This
-        // goes on screen, not just in the log, because it is the one number in
-        // the app that cannot be checked by looking at the result: a wrong EV
-        // looks exactly like a dark room.
-        page.reflectedRaw = "N " + N + " · t " + t + " · S " + S
-        console.log("reflected —", page.reflectedRaw)
-
-        if (!(N > 0) || !(t > 0) || !(S > 0)) return NaN
-
-        // Unit guard.
-        //
-        // QtMultimedia documents shutterSpeed in SECONDS. The droid backend on
-        // this phone appears to hand back the DENOMINATOR instead -- 60 for
-        // 1/60 -- and that does not merely offset the reading, it INVERTS it:
-        // log2(N^2 / t) becomes log2(N^2 * t_real), so the brighter the scene
-        // the lower the EV comes out. Pointing at a window read darker than
-        // pointing at the room, which is how this was caught.
-        //
-        // A phone viewfinder running its own auto-exposure never sits at a
-        // whole second or longer -- it would be unwatchable. So any t at or
-        // above 1 is a denominator, not an exposure time.
-        var seconds = t >= 1 ? 1 / t : t
-
-        return Math.log((N * N) / seconds) / Math.LN2 - Math.log(S / 100) / Math.LN2
-    }
+    // Reflected, through the lens: the ISO and exposure time the camera's
+    // auto-exposure chose for the current frame, and the lens's fixed aperture.
+    //
+    //   EV100 = log2(N^2 / t) - log2(S / 100)
+    //
+    // Like any reflected meter it takes what it sees for mid-grey, so snow
+    // reads dark and a black cat reads bright. Tap the viewfinder to meter a
+    // spot rather than the whole frame.
 
     function measure() {
-        var v = NaN
-        var note = ""
-
-        if (meterMode === 1) {
-            v = measureReflected()
-            if (isNaN(v)) {
-                // Not a failure worth hiding. The camera either reports its
-                // exposure or it does not, and if it does not you should know
-                // which number you are looking at.
-                v = measureIncident()
-                note = isNaN(v)
-                    ? qsTr("camera reported no exposure, and no light sensor reading yet")
-                    : qsTr("camera reported no exposure — fell back to the light sensor")
-                if (page.reflectedRaw !== "") note += "\n" + page.reflectedRaw
-            } else {
-                note = qsTr("reflected · %1").arg(page.reflectedRaw)
-            }
-        } else {
-            v = measureIncident()
-            note = isNaN(v) ? qsTr("no light sensor reading yet")
-                            : qsTr("incident · %1 lx").arg(Math.round(page.lastLux))
+        if (!meter.metered) {
+            page.note(meter.errorString !== "" ? meter.errorString
+                                               : qsTr("no reading from the camera yet"))
+            return
         }
-
-        page.meterNote = note
-        if (isNaN(v)) return
-
-        ev = v + evCalibration
-        evLocked = true
-        exposureList.currentIndex = suggestIndex()
-        publishReading()
+        page.ev = meter.ev100 + page.evCalibration
+        page.evLocked = true
+        dial.chosenSpeed = -1
+        page.apIndex = page.suggestIndex()
+        page.publishReading()
     }
 
-    function currentAperture() {
-        if (!apertures || apertures.length === 0) return "-"
-        return apertures[exposureList.currentIndex] || "-"
-    }
-
-    function currentSpeed() {
-        if (!shutterSpeeds || shutterSpeeds.length === 0) return "-"
-        return shutterSpeeds[calcShutterIndex(exposureList.currentIndex)] || "-"
-    }
-
-    // ---- logging a shot --------------------------------------------------
-    //
-    // One button, and it does the whole thing: grab the frame, save it, write
-    // the row.
-    //
-    // The frame is grabbed from the VIEWFINDER ITEM, not from the camera's
-    // still capture -- which means the HUD comes with it. The aperture, the
-    // speed and the film speed are already drawn over the picture, so they are
-    // burnt in for free and they are exactly what you were looking at when you
-    // pressed. No compositing, no second code path that could disagree with
-    // the screen.
-    //
-    // It is screen resolution and not the sensor's, and that is the right
-    // trade. This is a note about what you metered. The photograph is on film.
-
-    function picturesPath() {
-        // Ask the platform; fall back to the hardcoded path if it will not say.
-        try {
-            if (typeof StandardPaths !== "undefined" && StandardPaths.pictures) {
-                var p = "" + StandardPaths.pictures
-                return p.indexOf("file://") === 0 ? p.substring(7) : p
-            }
-        } catch (e) { }
-        return page.picturesDir
-    }
-
-    function logShot(photoPath) {
-        if (rollId < 0) return
-        Storage.addShot(rollId, new Date().toISOString(), ev,
-                        currentAperture(), currentSpeed(), iso, photoPath || "")
-        shotCount = Storage.shotCountForRoll(rollId)
-    }
-
-    function logShotWithFrame() {
-        var name = "fiatlux-" + new Date().toISOString().replace(/[:.]/g, "-") + ".png"
-        var path = picturesPath() + "/" + name
-
-        var started = viewfinder.grabToImage(function(result) {
-            // The flash fires AFTER the grab, never before. grabToImage
-            // renders the next frame of this item, and the flash is a cream
-            // rectangle at 0.6 opacity across the whole viewfinder -- start it
-            // first and it is in the picture. That was the entire reason the
-            // saved frames came out so much brighter than the scene.
-            shotFlash.restart()
-
-            if (result.saveToFile(path)) {
-                page.logShot(path)
-                page.meterNote = rollId >= 0
-                    ? qsTr("logged · %1").arg(name)
-                    : qsTr("saved %1 — open a roll to log it").arg(name)
-            } else {
-                page.logShot("")
-                page.meterNote = qsTr("could not write to Pictures — logged without the frame")
-            }
-        })
-
-        if (!started) {
-            shotFlash.restart()
-            page.logShot("")
-            page.meterNote = qsTr("could not grab the frame — logged without it")
+    // What the line under the dial says.
+    readonly property string readout: {
+        if (!page.evLocked) return ""
+        if (dial.pickedSpeed < 0) return ""
+        var d = dial.diffStops
+        var t = Gear.thirds(d)
+        var s = t === "0" ? qsTr("exact")
+                          : (d > 0 ? "+" : "−") + t + " " + (d > 0 ? qsTr("over") : qsTr("under"))
+        if (dial.deliberate) return s + "  ·  " + qsTr("chosen")
+        if (Math.abs(d) >= 1) {
+            var n = parseFloat(page.currentApertureText)
+            var exact = (n * n) / Math.pow(2, page.evIso)
+            if (d < 0 && page.shutterSpeeds.indexOf("B") !== -1)
+                return s + "  ·  " + qsTr("or B for %1").arg(Gear.formatSeconds(exact))
+            return s + "  ·  " + (d < 0 ? qsTr("no longer speed") : qsTr("no faster speed"))
         }
+        return s
     }
+    readonly property bool readoutWarns: page.evLocked && !dial.deliberate && Math.abs(dial.diffStops) >= 1
 
-    // ---- the camera ------------------------------------------------------
-    //
-    // A Loader, and this is the whole fix.
-    //
-    // Sailfish's resource policy takes the camera away the moment the app goes
-    // to its cover. Asking for it back does not work: the gstreamer pipeline
-    // behind the Camera element is already dead, the element does not know it,
-    // and a cameraState assignment lands on a corpse. No error, no return
-    // value -- the viewfinder just stays black. Retrying harder does not help,
-    // because there is nothing wrong with the request; the object is spent.
-    //
-    // So do not reuse it. The Loader DESTROYS the Camera when the app loses
-    // focus and BUILDS A NEW ONE when it comes back, and a camera that was
-    // created five milliseconds ago has no memory of anyone taking anything
-    // from it. This is what Jolla's own camera app does.
-    //
-    // Everything that touches the camera goes through page.cam, which is null
-    // while the Loader is inactive -- hence the guards everywhere.
+    // ---- notes, shown on the viewfinder for a moment ----
 
-    readonly property bool cameraWanted:
-        page.status === PageStatus.Active && Qt.application.state === Qt.ApplicationActive
-
-    readonly property var cam: cameraLoader.item
-
-    readonly property bool cameraLive:
-        cam !== null && cam !== undefined && cam.cameraStatus === Camera.ActiveStatus
-
-    property string cameraNote: ""
-
-    Loader {
-        id: cameraLoader
-        active: page.cameraWanted
-        sourceComponent: Camera {
-            captureMode: Camera.CaptureStillImage
-            cameraState: Camera.ActiveState
-
-            onCameraStatusChanged: {
-                if (cameraStatus === Camera.ActiveStatus) {
-                    page.cameraNote = ""
-                    page.applyFocus()
-                }
-            }
-
-            onError: {
-                console.log("camera error:", errorCode, errorString)
-                page.cameraNote = errorString
-            }
-        }
+    property string noteText: ""
+    function note(t) {
+        page.noteText = t
+        noteTimer.restart()
     }
-
-    // Manual rebuild, for when it comes back wrong anyway. Tapping a black
-    // viewfinder is what everyone tries first, so let it be the thing that
-    // works. Setting `active` by hand breaks its binding, so the timer puts
-    // the binding back rather than leaving it pinned.
     Timer {
-        id: cameraReload
-        interval: 250
-        onTriggered: cameraLoader.active = Qt.binding(function() { return page.cameraWanted })
+        id: noteTimer
+        interval: 3500
+        onTriggered: page.noteText = ""
     }
 
-    function reloadCamera() {
-        page.cameraNote = ""
-        cameraLoader.active = false
-        cameraReload.restart()
+    // ---- logging a shot ---------------------------------------------------
+    //
+    // A real photo from the camera, cropped to the square you were looking
+    // at, with the strip burnt in: the pair, the film speed, and which camera,
+    // film and frame. Saved in Pictures/FiatLux. It is a note about what you
+    // metered; the photograph is on film.
+
+    property var pendingShot: null
+
+    function stripDetail() {
+        if (page.quickMeter) return ""
+        if (page.rollId >= 0)
+            return page.sourceLabel + "  ·  " + page.filmLabel + "  ·  " + qsTr("frame %1").arg(page.shotCount + 1)
+        return page.sourceLabel + "  ·  " + qsTr("no film")
     }
 
-    // Only for the placeholder. A viewfinder that says "waking the camera"
-    // forever is a lie; one that says which state it is in is a bug report you
-    // can read without a laptop.
-    function cameraStatusName() {
-        if (page.cam === null || page.cam === undefined) return "no camera object"
-        switch (page.cam.cameraStatus) {
-        case Camera.UnavailableStatus: return "unavailable"
-        case Camera.UnloadedStatus:    return "unloaded"
-        case Camera.LoadingStatus:     return "loading"
-        case Camera.UnloadingStatus:   return "unloading"
-        case Camera.LoadedStatus:      return "loaded"
-        case Camera.StandbyStatus:     return "standby"
-        case Camera.StartingStatus:    return "starting"
-        case Camera.StoppingStatus:    return "stopping"
-        case Camera.ActiveStatus:      return "active"
-        default:                       return "unknown"
+    function logShot() {
+        if (meter.capturing) return
+        page.pendingShot = { rollId: page.rollId, ev: page.ev, aperture: page.currentApertureText,
+                             speed: page.currentSpeedText, iso: page.iso }
+        shotFlash.restart()
+        if (!meter.captureShot("f/" + page.currentApertureText, page.currentSpeedText,
+                               "ISO " + page.iso, page.stripDetail())) {
+            page.recordShot("")
+            page.note(qsTr("could not take the picture — logged without it"))
         }
     }
 
-    // ---- focus ----------------------------------------------------------
+    function recordShot(path) {
+        var s = page.pendingShot
+        page.pendingShot = null
+        if (!s || s.rollId < 0 || s.rollId !== page.rollId) return false
+        Storage.addShot(s.rollId, new Date().toISOString(), s.ev, s.aperture, s.speed, s.iso, path || "")
+        page.shotCount = Storage.shotCountForRoll(s.rollId)
+        return true
+    }
+
+    Connections {
+        target: meter
+        onShotSaved: {
+            var logged = page.recordShot(path)
+            if (logged) page.note(qsTr("frame %1 logged").arg(page.shotCount))
+            else page.note(qsTr("saved in Pictures/FiatLux — load film to log frames"))
+        }
+        onShotFailed: {
+            var logged = page.recordShot("")
+            page.note(logged ? qsTr("frame %1 logged, without the picture").arg(page.shotCount)
+                             : qsTr("could not save the picture: %1").arg(reason))
+        }
+    }
+
+    // ---- is the app actually in front of you? -----------------------------
     //
-    // Focus has to be requested AFTER the camera reaches ActiveStatus, not in
-    // the declaration -- before that there is no device to ask, and the
-    // assignment is quietly dropped. Every call is guarded, because which
-    // modes exist is a property of the hardware and not of QtMultimedia.
+    // POLLED, not bound. Qt.application.state is correct when you read it, but
+    // on Sailfish its change signal does not reliably arrive -- a binding on
+    // it latches to whatever was true at load.
 
-    function applyFocus() {
-        if (!page.cameraLive) return
-        try {
-            if (page.cam.focus.isFocusModeSupported(Camera.FocusContinuous)) {
-                page.cam.focus.focusMode = Camera.FocusContinuous
-            } else if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto)) {
-                page.cam.focus.focusMode = Camera.FocusAuto
-                page.cam.searchAndLock()
-            }
-        } catch (e) { console.log("focus mode:", e) }
-        try {
-            if (page.cam.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
-                page.cam.focus.focusPointMode = Camera.FocusPointAuto
-            }
-        } catch (e) { console.log("focus point:", e) }
+    property int appState: Qt.ApplicationActive
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        onTriggered: page.appState = Qt.application.state
     }
 
-    function refocus() {
-        if (!page.cameraLive) return
-        try {
-            page.cam.unlock()
-            if (page.cam.focus.isFocusModeSupported(Camera.FocusAuto))
-                page.cam.focus.focusMode = Camera.FocusAuto
-            page.cam.searchAndLock()
-        } catch (e) { console.log("refocus:", e) }
-    }
-
-    LightSensor {
-        id: lightSensor
-        active: Qt.application.state === Qt.ApplicationActive
-        onReadingChanged: page.lastLux = reading.illuminance
-    }
+    readonly property bool cameraLive: meter.running && meter.hasFrame
 
     PaperBackground { }
 
     SilicaFlickable {
+        id: flick
         anchors.fill: parent
-        contentHeight: contentColumn.height
+        contentHeight: Math.max(height, column.height)
 
-        // No backgroundColor here. Setting it paints the whole panel, which
-        // dims the entire screen behind the menu -- it looks like the app
-        // dropped out from under the drawer. Colour the items instead.
         PullDownMenu {
             highlightColor: FiatLuxTheme.accent
 
             MenuItem {
-                text: FiatLuxTheme.ambient ? qsTr("fiat colours") : qsTr("Follow ambience")
+                text: qsTr("About")
+                color: FiatLuxTheme.primaryText
+                onClicked: pageStack.push(Qt.resolvedUrl("AboutPage.qml"))
+            }
+            MenuItem {
+                text: FiatLuxTheme.ambient ? qsTr("Fiat colours") : qsTr("Follow ambience")
                 color: FiatLuxTheme.primaryText
                 onClicked: FiatLuxTheme.setAmbient(!FiatLuxTheme.ambient)
             }
@@ -502,22 +508,18 @@ Page {
                 onClicked: pageStack.push(Qt.resolvedUrl("CalibratePage.qml"))
             }
             MenuItem {
-                visible: rollId >= 0
-                text: qsTr("Close roll")
+                text: qsTr("History")
                 color: FiatLuxTheme.primaryText
-                onClicked: {
-                    Storage.closeRoll(rollId)
-                    app.reloadRolls()
-                    loadQuick()
-                }
+                onClicked: pageStack.push(Qt.resolvedUrl("HistoryPage.qml"))
             }
             MenuItem {
-                text: qsTr("New roll")
+                visible: page.rollId >= 0
+                text: qsTr("This roll")
                 color: FiatLuxTheme.primaryText
-                onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { returnToMeter: true })
+                onClicked: pageStack.push(Qt.resolvedUrl("ShotsPage.qml"), { rollId: page.rollId })
             }
             MenuItem {
-                text: qsTr("Film stocks")
+                text: qsTr("Loaded film")
                 color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("FilmPage.qml"))
             }
@@ -534,25 +536,20 @@ Page {
         }
 
         Column {
-            id: contentColumn
+            id: column
             width: page.width
-            spacing: Theme.paddingMedium
 
-            // ---- top bar ----
-            //
-            // The wordmark and the source pill both sit ON the system
-            // indicator row rather than below it. They are short and they live
-            // in the corners, so the centred cutout never reaches either.
+            // ---- top bar: the wordmark, and the film speed opposite ----
             Item {
+                id: topBar
                 width: parent.width
-                height: FiatLuxTheme.statusRowCenter + sourcePill.height / 2 + Theme.paddingMedium
+                height: FiatLuxTheme.statusRowCenter + wordmark.height / 2 + Theme.paddingMedium
 
                 Text {
                     id: wordmark
                     anchors.left: parent.left
                     anchors.leftMargin: Theme.horizontalPageMargin
-                    anchors.top: parent.top
-                    anchors.topMargin: Math.max(0, FiatLuxTheme.statusRowCenter - height / 2)
+                    y: Math.max(0, FiatLuxTheme.statusRowCenter - height / 2)
                     text: "fiat lux"
                     color: FiatLuxTheme.primaryText
                     font.pixelSize: Theme.fontSizeLarge
@@ -560,41 +557,38 @@ Page {
                     font.italic: true
                 }
 
-                BackgroundItem {
-                    id: sourcePill
+                // Only Quick Meter lets you choose; with a film loaded, the
+                // film decides, and the corner only says what it is.
+                MouseArea {
+                    id: isoCorner
                     anchors.right: parent.right
-                    anchors.rightMargin: Theme.horizontalPageMargin
-                    anchors.top: parent.top
-                    anchors.topMargin: Math.max(0, FiatLuxTheme.statusRowCenter - height / 2)
-                    width: pillRow.width + Theme.paddingLarge * 2
+                    width: isoRow.width + Theme.horizontalPageMargin * 2
                     height: Theme.itemSizeSmall
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: {
-                        var arr = ["Quick Meter"]
-                        for (var i = 0; i < app.cameraModel.count; i++)
-                            arr.push(app.cameraModel.get(i).name)
-                        sourceMenu.items = arr
-                        sourceMenu.show(sourcePill)
-                    }
+                    y: FiatLuxTheme.statusRowCenter - height / 2
+                    enabled: page.quickMeter
+                    onClicked: page.chooseIso()
+
                     Rectangle {
                         anchors.fill: parent
-                        radius: height / 2
-                        color: sourcePill.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorderActive
-                        border.width: 1
+                        color: FiatLuxTheme.highlightWash
+                        visible: isoCorner.pressed && isoCorner.containsMouse
                     }
+
                     Row {
-                        id: pillRow
-                        anchors.centerIn: parent
+                        id: isoRow
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.horizontalPageMargin
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: Theme.paddingSmall
-                        Text {
-                            text: rollId >= 0 ? sourceLabel + " · " + shotCount + "fr" : sourceLabel
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif
-                            font.italic: true
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "ISO " + page.iso
+                            color: page.quickMeter ? FiatLuxTheme.primaryText : FiatLuxTheme.secondaryText
+                            font.pixelSize: Theme.fontSizeMedium
                         }
-                        Text {
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: page.quickMeter
                             text: "▾"
                             color: FiatLuxTheme.accent
                             font.pixelSize: Theme.fontSizeSmall
@@ -605,39 +599,62 @@ Page {
 
             // ---- viewfinder ----
             //
-            // The one fixed dark surface in the app, and the one place a fixed
-            // colour is right: it stands in for a camera feed. Everything
-            // drawn on it is fixed too, for the same reason -- and because
-            // this whole rectangle is what gets saved when you log a shot.
+            // The one fixed dark surface in the app: it stands in for a camera
+            // feed. Square, as wide as the screen -- unless the screen is too
+            // short for everything below it, then as big as fits.
             Rectangle {
                 id: viewfinder
-                width: page.width
-                height: page.width
+                readonly property real room: page.height - topBar.height - dial.height - readoutLabel.height
+                                             - rule.height - cameraLine.contentHeight
+                                             - (lensLine.visible ? lensLine.contentHeight : 0) - measureBtn.height
+                                             - logBtn.height - Theme.paddingLarge * 2
+                width: Math.max(Theme.itemSizeHuge * 2, Math.min(page.width, room))
+                height: width
+                anchors.horizontalCenter: parent.horizontalCenter
                 color: FiatLuxTheme.viewfinderBg
                 clip: true
 
-                VideoOutput {
-                    id: vo
-                    source: page.cam
-                    anchors.centerIn: parent
-                    // Manual "crop to fill": overfill the square, parent clips.
-                    property real ar: sourceRect.height > 0
-                                      ? sourceRect.width / sourceRect.height : 1
-                    width:  ar >= 1 ? parent.height * ar : parent.width
-                    height: ar >= 1 ? parent.height : parent.width / ar
-                    fillMode: VideoOutput.PreserveAspectFit
+                Camera2Meter {
+                    id: meter
+                    anchors.fill: parent
+                    fill: true
+                    photos: true
                     orientation: page.viewfinderOrientation
-                    visible: page.cameraLive
+                    active: page.status === PageStatus.Active
+                            && page.appState === Qt.ApplicationActive
                 }
 
-                // Live: refocus. Black: build a new camera. Tapping the picture
-                // is what anyone tries first in either situation, so it is
-                // worth making that the thing that works.
+                Rectangle {
+                    id: spotMark
+                    visible: meter.spot && page.cameraLive
+                    width: Theme.itemSizeSmall
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.color: FiatLuxTheme.viewfinderText
+                    border.width: 2
+                    opacity: 0.8
+                }
+
+                // Tap: meter that spot. Press and hold: the whole frame again.
+                // While the camera is down, a tap tries again.
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: page.cameraLive ? page.refocus() : page.reloadCamera()
+                    onClicked: {
+                        if (!page.cameraLive) {
+                            meter.restart()
+                            return
+                        }
+                        spotMark.x = mouse.x - spotMark.width / 2
+                        spotMark.y = mouse.y - spotMark.height / 2
+                        meter.meterAt(mouse.x / width, mouse.y / height)
+                    }
+                    onPressAndHold: meter.meterWholeFrame()
                 }
 
+                // Waking, or what went wrong. Nothing technical while it is
+                // only starting; the helper's own words only once it has
+                // stopped trying.
                 Column {
                     anchors.centerIn: parent
                     width: parent.width - Theme.horizontalPageMargin * 2
@@ -647,54 +664,92 @@ Page {
                     Text {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
-                        text: qsTr("tap to wake the camera")
+                        text: meter.errorString !== "" ? qsTr("the camera would not start") : qsTr("waking the camera")
                         color: FiatLuxTheme.viewfinderText
-                        opacity: 0.7
+                        opacity: 0.75
                         font.pixelSize: Theme.fontSizeSmall
                         font.family: FiatLuxTheme.serif
                         font.italic: true
                     }
-
-                    // The truth, in small type.
                     Text {
+                        visible: meter.errorString !== ""
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
-                        text: page.cameraNote !== "" ? page.cameraNote : page.cameraStatusName()
+                        maximumLineCount: 4
+                        elide: Text.ElideRight
+                        text: meter.errorString + "\n" + qsTr("tap to try again")
                         color: FiatLuxTheme.viewfinderText
-                        opacity: 0.4
+                        opacity: 0.45
                         font.pixelSize: Theme.fontSizeExtraSmall
                     }
                 }
 
+                // A moment's note: frame logged, picture saved.
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.topMargin: Theme.paddingMedium
+                    width: Math.min(parent.width - Theme.paddingLarge * 2, noteLabel.implicitWidth + Theme.paddingLarge * 2)
+                    height: noteLabel.height + Theme.paddingSmall * 2
+                    radius: Theme.paddingSmall
+                    color: Qt.rgba(0, 0, 0, 0.6)
+                    opacity: page.noteText !== "" ? 1 : 0
+                    visible: opacity > 0
+                    Behavior on opacity { FadeAnimation { } }
+                    Text {
+                        id: noteLabel
+                        anchors.centerIn: parent
+                        width: Math.min(implicitWidth, parent.parent.width - Theme.paddingLarge * 4)
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        text: page.noteText
+                        color: FiatLuxTheme.viewfinderText
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                    }
+                }
+
+                // The strip that is burnt into every logged frame: the pair,
+                // the film speed, and which camera, film and frame it was.
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    height: hudRow.height + Theme.paddingMedium * 2
+                    height: hudCol.height + Theme.paddingMedium * 2
                     color: Qt.rgba(0, 0, 0, 0.65)
-                    Row {
-                        id: hudRow
+                    Column {
+                        id: hudCol
                         anchors.centerIn: parent
-                        spacing: Theme.paddingLarge
-                        Text {
-                            // Comma operator: read the dependencies, show the last value.
-                            text: (page.apertures,
-                                   exposureList.currentIndex,
-                                   "f/" + currentAperture())
-                            color: FiatLuxTheme.viewfinderText
-                            font.pixelSize: Theme.fontSizeMedium
+                        width: parent.width - Theme.horizontalPageMargin * 2
+                        spacing: Theme.paddingSmall
+                        Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            spacing: Theme.paddingLarge
+                            Text {
+                                text: "f/" + page.currentApertureText
+                                color: FiatLuxTheme.viewfinderText
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
+                            Text {
+                                text: page.evLocked ? page.currentSpeedText : "–"
+                                color: FiatLuxTheme.viewfinderAccent
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
+                            Text {
+                                text: "ISO " + page.iso
+                                color: FiatLuxTheme.viewfinderText
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
                         }
                         Text {
-                            text: (page.iso, page.ev, page.shutterSpeeds,
-                                   exposureList.currentIndex, currentSpeed())
-                            color: FiatLuxTheme.viewfinderAccent
-                            font.pixelSize: Theme.fontSizeMedium
-                        }
-                        Text {
-                            text: "ISO " + iso
+                            visible: !page.quickMeter
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideMiddle
+                            text: page.stripDetail()
                             color: FiatLuxTheme.viewfinderText
-                            font.pixelSize: Theme.fontSizeMedium
+                            opacity: 0.8
+                            font.pixelSize: Theme.fontSizeExtraSmall
                         }
                     }
                 }
@@ -709,319 +764,173 @@ Page {
                         id: flashAnim
                         target: shotFlash
                         property: "opacity"
-                        from: 0.6; to: 0.0; duration: 350
+                        from: 0.6
+                        to: 0.0
+                        duration: 350
                     }
                 }
             }
 
-            // ---- exposure scroller ----
-            Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                height: Theme.itemSizeLarge * 2
-                radius: FiatLuxTheme.cardRadius
-                color: FiatLuxTheme.card
-                border.color: evLocked ? FiatLuxTheme.accent : FiatLuxTheme.cardBorder
-                border.width: evLocked ? FiatLuxTheme.cardBorderWidth : 1
-                clip: true
-
-                ListView {
-                    id: exposureList
-                    anchors.fill: parent
-                    orientation: ListView.Horizontal
-                    snapMode: ListView.SnapToItem
-                    highlightRangeMode: ListView.StrictlyEnforceRange
-                    preferredHighlightBegin: width / 2 - Theme.itemSizeHuge / 2
-                    preferredHighlightEnd:   width / 2 + Theme.itemSizeHuge / 2
-                    clip: true
-                    // scrollerGen in the expression forces full delegate rebuild on camera switch
-                    model: (scrollerGen, apertures.length)
-
-                    // Whatever you land on is what the cover should show.
-                    onCurrentIndexChanged: page.publishReading()
-
-                    delegate: Item {
-                        width: Theme.itemSizeHuge
-                        height: exposureList.height
-                        property bool isCenter: ListView.isCurrentItem
-                        // Touch every dependency directly — QML only tracks
-                        // properties read in the binding, not inside calls.
-                        property int shutterIdx: {
-                            var _g = page.scrollerGen
-                            var _i = page.iso
-                            var _e = page.ev
-                            var _a = page.apertures
-                            var _s = page.shutterSpeeds
-                            return calcShutterIndex(index)
-                        }
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: parent.width - Theme.paddingSmall * 2
-                            height: parent.height - Theme.paddingLarge * 2
-                            radius: Theme.paddingLarge
-                            color: FiatLuxTheme.pillFillActive
-                            border.color: FiatLuxTheme.accent
-                            border.width: 1
-                            visible: isCenter
-                        }
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: Theme.paddingSmall
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: (shutterSpeeds && shutterSpeeds.length > shutterIdx)
-                                      ? shutterSpeeds[shutterIdx] : "-"
-                                color: isCenter ? FiatLuxTheme.accent : FiatLuxTheme.secondaryText
-                                font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                                font.bold: isCenter
-                            }
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: (apertures && apertures.length > index)
-                                      ? "f/" + apertures[index] : "-"
-                                color: isCenter ? FiatLuxTheme.primaryText : FiatLuxTheme.secondaryText
-                                font.pixelSize: isCenter ? Theme.fontSizeLarge : Theme.fontSizeMedium
-                                font.bold: isCenter
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ---- ISO + lens row ----
-            Row {
-                x: Theme.horizontalPageMargin
-                spacing: Theme.paddingMedium
-
-                BackgroundItem {
-                    id: isoBtn
-                    visible: !editingIso
-                    width: isoPillBg.width
-                    height: isoPillBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: isoMenu.show(isoBtn)
-                    Rectangle {
-                        id: isoPillBg
-                        radius: height / 2
-                        color: isoBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        width: isoLbl.width + Theme.paddingLarge * 2
-                        height: isoLbl.height + Theme.paddingMedium
-                        Text {
-                            id: isoLbl
-                            anchors.centerIn: parent
-                            text: "ISO " + iso
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
-                }
-
-                Row {
-                    visible: editingIso
-                    spacing: Theme.paddingSmall
-                    TextField {
-                        id: isoEditor
-                        width: Theme.itemSizeMedium
-                        text: iso.toString()
-                        color: FiatLuxTheme.primaryText
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        maximumLength: 5
-                        validator: IntValidator { bottom: 1; top: 99999 }
-                        onTextChanged: { var n = parseInt(text); if (!isNaN(n) && n > 0) iso = n }
-                        EnterKey.onClicked: { editingIso = false; page.publishReading() }
-                    }
-                    IconButton {
-                        anchors.verticalCenter: parent.verticalCenter
-                        icon.source: "image://theme/icon-m-accept"
-                        onClicked: { editingIso = false; page.publishReading() }
-                    }
-                }
-
-                BackgroundItem {
-                    id: lensBtn
-                    visible: lens.length > 0
-                    width: lensPillBg.width
-                    height: lensPillBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: {
-                        if (compatLenses.length <= 1) return
-                        var arr = []
-                        for (var i = 0; i < compatLenses.length; i++) arr.push(compatLenses[i].name)
-                        lensMenu.items = arr
-                        lensMenu.show(lensBtn)
-                    }
-                    Rectangle {
-                        id: lensPillBg
-                        radius: height / 2
-                        color: lensBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        width: Math.min(lensLbl.implicitWidth + Theme.paddingLarge * 2,
-                                        page.width - 2 * Theme.horizontalPageMargin - 160)
-                        height: lensLbl.height + Theme.paddingMedium
-                        Text {
-                            id: lensLbl
-                            anchors.centerIn: parent
-                            width: parent.width - Theme.paddingLarge * 2
-                            text: lens
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-            }
-
-            // ---- what this meter is ----
-            //
-            // Said here, at the moment of use, and not in an about page. An
-            // incident meter used like a reflected one gives a confident wrong
-            // answer, which is the worst kind, and the only defence is to name
-            // the method where the person is actually looking.
-            //
-            // The reflected pills are gone. Not hidden -- gone. This phone's
-            // camera reports t 0 and S 0, so there was never a second method
-            // to choose between; the pill offered a choice the hardware could
-            // not honour.
-            Column {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                spacing: 0
-
-                Label {
-                    width: parent.width
-                    text: qsTr("incident · point the screen at the camera")
-                    font.pixelSize: Theme.fontSizeExtraSmall
-                    font.bold: true
-                    color: FiatLuxTheme.accent
-                }
-
-                Label {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Measured from the subject, not from the camera. Calibrated for daylight — under a lamp it reads bright.")
-                    font.pixelSize: Theme.fontSizeExtraSmall
-                    color: FiatLuxTheme.secondaryText
-                }
-            }
-
-            // ---- measure button ----
-            BackgroundItem {
-                id: measureBtn
+            // ---- the dial ----
+            ExposureDial {
+                id: dial
                 width: parent.width
-                height: Theme.itemSizeLarge
-                onClicked: page.measure()
-                Rectangle {
+                apertures: page.apertures
+                speeds: page.shutterSpeeds
+                evIso: page.evIso
+                live: page.evLocked
+                // Two-way, by hand: the page moves the dial after a
+                // measurement, and your finger moves it the other way.
+                onApIndexChanged: if (page.apIndex !== apIndex) page.apIndex = apIndex
+                onChosen: page.publishReading()
+            }
+
+            Label {
+                id: readoutLabel
+                width: parent.width
+                height: implicitHeight + Theme.paddingSmall
+                horizontalAlignment: Text.AlignHCenter
+                text: page.readout
+                color: page.readoutWarns ? FiatLuxTheme.outOfRange : FiatLuxTheme.secondaryText
+                font.pixelSize: Theme.fontSizeExtraSmall
+            }
+
+            Rectangle {
+                id: rule
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                height: Math.max(1, Math.round(Theme.paddingSmall / 6))
+                color: FiatLuxTheme.innerBorder
+            }
+
+            // ---- what is being metered ----
+            //
+            // The camera and its film, centred, with a dropdown under it the
+            // way Mos does it. The last item is an action, not a choice.
+            ListItem {
+                id: cameraLine
+                width: parent.width
+                contentHeight: cameraCol.height + Theme.paddingMedium * 2
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: openMenu()
+
+                Column {
+                    id: cameraCol
                     anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium
-                    radius: Theme.paddingLarge
-                    color: measureBtn.highlighted
-                           ? Qt.darker(FiatLuxTheme.accent, 1.2) : FiatLuxTheme.accent
+                    width: parent.width - Theme.horizontalPageMargin * 2
+
                     Row {
-                        anchors.centerIn: parent
-                        spacing: Theme.paddingMedium
-                        Text {
-                            text: evLocked ? qsTr("remeasure") : qsTr("measure")
-                            color: FiatLuxTheme.markOn(FiatLuxTheme.accent)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.paddingSmall
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(implicitWidth, cameraCol.width - caret.width - Theme.paddingSmall)
+                            truncationMode: TruncationMode.Fade
+                            text: page.quickMeter ? qsTr("Quick Meter")
+                                  : page.rollId >= 0 ? page.sourceLabel + "  ·  " + page.filmLabel
+                                  : page.sourceLabel + "  ·  " + qsTr("no film")
+                            color: FiatLuxTheme.primaryText
                             font.pixelSize: Theme.fontSizeMedium
                             font.family: FiatLuxTheme.serif
                             font.italic: true
-                            font.bold: true
-                            anchors.verticalCenter: parent.verticalCenter
                         }
-                        Text {
-                            visible: evLocked
-                            text: "EV " + ev.toFixed(1)
-                            color: FiatLuxTheme.markOn(FiatLuxTheme.accent)
+                        Label {
+                            id: caret
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "▾"
+                            color: FiatLuxTheme.accent
                             font.pixelSize: Theme.fontSizeSmall
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                 }
-            }
 
-            // What the last action actually did. Visible on purpose: a meter
-            // that silently substitutes one method for another is worse than
-            // one that admits it, and a log that silently drops the picture is
-            // worse than one that says the picture is missing.
-            Label {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                visible: page.meterNote !== ""
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                text: page.meterNote
-                font.pixelSize: Theme.fontSizeExtraSmall
-                color: FiatLuxTheme.secondaryText
-            }
-
-            // ---- log shot ----
-            //
-            // One button, one job. It was two -- "log shot" and "capture" --
-            // which asked you to decide whether this frame deserved a picture.
-            // It always does: the picture IS the log entry, with the reading
-            // already burnt into it.
-            //
-            // No icon. image://theme/ icons are drawn in the ambience's
-            // primary colour, which under Fiat colours on a dark ambience is
-            // white on a white button. The word does the job on its own.
-            BackgroundItem {
-                id: captureBtn
-                width: parent.width
-                height: Theme.itemSizeLarge
-                enabled: page.cameraLive
-                opacity: enabled ? 1.0 : 0.4
-                onClicked: page.logShotWithFrame()
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium
-                    radius: Theme.paddingLarge
-                    color: captureBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.card
-                    border.color: FiatLuxTheme.accent
-                    border.width: 1
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("log shot")
-                        color: FiatLuxTheme.primaryText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: FiatLuxTheme.serif
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: page.sourceChoices
+                        MenuItem {
+                            text: modelData.label
+                            color: modelData.id === page.cameraId ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
+                            onClicked: page.chooseSource(modelData.id)
+                        }
+                    }
+                    MenuItem {
+                        text: page.cameraId >= 0 && page.rollId < 0 ? qsTr("load film into %1…").arg(page.sourceLabel)
+                                                                     : qsTr("load film…")
+                        color: FiatLuxTheme.accent
                         font.italic: true
+                        font.family: FiatLuxTheme.serif
+                        onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
                     }
                 }
+            }
+
+            // ---- the lens, for a camera whose lens comes off ----
+            ListItem {
+                id: lensLine
+                visible: page.cameraType !== 0 && page.cameraId >= 0
+                width: parent.width
+                contentHeight: lensRow.height + Theme.paddingSmall * 2
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: openMenu()
+
+                Row {
+                    id: lensRow
+                    anchors.centerIn: parent
+                    spacing: Theme.paddingSmall
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, lensLine.width - Theme.horizontalPageMargin * 2 - lensCaret.width)
+                        truncationMode: TruncationMode.Fade
+                        text: page.lens !== "" ? page.lens : qsTr("no lens for %1 yet").arg(page.mount)
+                        color: FiatLuxTheme.secondaryText
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                    Label {
+                        id: lensCaret
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "\u25be"
+                        color: FiatLuxTheme.accent
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                    }
+                }
+
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: page.compatLenses
+                        MenuItem {
+                            text: modelData.name
+                            color: index === page.lensIndex ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
+                            onClicked: page.chooseLens(index)
+                        }
+                    }
+                    MenuItem {
+                        text: qsTr("add a lens\u2026")
+                        color: FiatLuxTheme.accent
+                        font.italic: true
+                        font.family: FiatLuxTheme.serif
+                        onClicked: pageStack.push(Qt.resolvedUrl("AddLensPage.qml"), { presetMount: page.mount })
+                    }
+                }
+            }
+
+            FiatButton {
+                id: measureBtn
+                text: page.evLocked ? qsTr("remeasure") : qsTr("measure")
+                detail: page.evLocked ? "EV " + page.ev.toFixed(1) : ""
+                onClicked: page.measure()
+            }
+
+            FiatButton {
+                id: logBtn
+                filled: false
+                text: meter.capturing ? qsTr("taking the picture…") : qsTr("log shot")
+                enabled: page.cameraLive && page.evLocked && !meter.capturing
+                onClicked: page.logShot()
             }
 
             Item { width: 1; height: Theme.paddingLarge }
-        }
-    }
-
-    PillMenu {
-        id: sourceMenu
-        onPicked: function(idx) {
-            page.evLocked = false
-            page.meterNote = ""
-            if (idx === 0) page.loadQuick()
-            else page.loadCamera(app.cameraModel.get(idx - 1).id)
-        }
-    }
-
-    PillMenu {
-        id: isoMenu
-        items: [25,50,64,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2500,3200,6400,"Custom…"]
-        onPicked: function(idx) {
-            if (typeof items[idx] === "string") page.editingIso = true
-            else { page.iso = items[idx]; page.publishReading() }
-        }
-    }
-
-    PillMenu {
-        id: lensMenu
-        onPicked: function(idx) {
-            page.lensIndex = idx
-            page.applyLens()
         }
     }
 }

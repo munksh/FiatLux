@@ -1,23 +1,62 @@
-# Qt Creator / qmake
+# Local editor configuration
 *.pro.user
 *.pro.user.*
-Makefile
-moc_*.cpp
-qrc_*.cpp
-*.o
-*.so
-.qmake.stash
-
-# Build dirs
-build/
-build-*/
-RPMS/
-
-# Editors
+*.autosave
 .vscode/
 .idea/
 *.swp
 *~
-
-# OS
 .DS_Store
+
+# QMake and compiler output
+Makefile
+Makefile.*
+.qmake.stash
+*.o
+*.obj
+*.so
+*.a
+moc_*.cpp
+moc_*.h
+moc_predefs.h
+qrc_*.cpp
+ui_*.h
+
+# Built application
+/harbour-fiatlux
+/camera2-helper
+camera2/prebuilt/*.part
+
+# Sailfish SDK and packaging output
+.sfdk/
+RPMS/
+SRPMS/
+*.rpm
+*.tar.bz2
+*.tar.gz
+documentation.list
+debugfiles.list
+debuglinks.list
+debugsourcefiles.list
+debugsources.list
+elfbins.list
+
+# Build directories
+build/
+build-*/
+target/
+rust/target/
+
+# Temporary copies
+.backups/
+*.before-*
+*.failed-*
+*.orig
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+moc_*
+qrc_*
+lux_dump.txt
