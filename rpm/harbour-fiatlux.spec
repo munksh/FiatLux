@@ -19,6 +19,8 @@ BuildRequires:  desktop-file-utils
 %global __requires_exclude_from ^.*/usr/libexec/droid-hybris/system/lib64/libfiatluxcamera2\\.so$
 %global __provides_exclude_from ^.*/usr/libexec/droid-hybris/system/lib64/libfiatluxcamera2\\.so$
 %global __requires_exclude ^(libandroid\\.so.*|libcamera2ndk\\.so.*|libmediandk\\.so.*|libnativewindow\\.so.*|liblog\\.so.*|libdl_android\\.so.*)$
+# The Android library has no GNU build ID, so a missing one must not stop the build.
+%undefine _missing_build_ids_terminate_build
 
 %description
 A light meter for analogue film photography. It meters the light and offers
