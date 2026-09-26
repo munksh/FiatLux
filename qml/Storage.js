@@ -8,6 +8,8 @@ function getDB() {
 // ── Schema ───────────────────────────────────────────────────────────────────
 // schema_version 2 = relational model (cameras / lenses / stocks / rolls / shots)
 // version 1 was the old embedded-lens model. Migration drops it once.
+// schema_version 3 = cameras.apertures (a fixed lens belongs to its camera)
+// and stocks.favourite. Added in place: nothing a version 2 user saved is lost.
 function init() {
     var db = getDB()
     db.transaction(function(tx) {
@@ -25,28 +27,42 @@ function init() {
             tx.executeSql("DROP TABLE IF EXISTS shots")
         }
 
-        tx.executeSql("CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type INTEGER, mount TEXT, bodySpeeds TEXT)")
+        if (v === 2) {
+            // try/catch: a column that is already there must not take the
+            // whole transaction, and with it the database, down.
+            try { tx.executeSql("ALTER TABLE cameras ADD COLUMN apertures TEXT") } catch (e1) { }
+            try { tx.executeSql("ALTER TABLE stocks ADD COLUMN favourite INTEGER DEFAULT 0") } catch (e2) { }
+            // A fixed-lens camera used to need a lens of the same mount. Move
+            // that lens's apertures, and its speeds if the camera had none,
+            // onto the camera itself.
+            tx.executeSql("UPDATE cameras SET apertures=(SELECT l.apertures FROM lenses l WHERE l.mount=cameras.mount LIMIT 1), bodySpeeds=CASE WHEN IFNULL(bodySpeeds,'')='' THEN IFNULL((SELECT l.speeds FROM lenses l WHERE l.mount=cameras.mount LIMIT 1),'') ELSE bodySpeeds END WHERE type=0 AND IFNULL(apertures,'')=''")
+        }
+
+        tx.executeSql("CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type INTEGER, mount TEXT, bodySpeeds TEXT, apertures TEXT)")
         tx.executeSql("CREATE TABLE IF NOT EXISTS lenses (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, mount TEXT, apertures TEXT, speeds TEXT)")
-        tx.executeSql("CREATE TABLE IF NOT EXISTS stocks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, boxIso INTEGER)")
+        tx.executeSql("CREATE TABLE IF NOT EXISTS stocks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, boxIso INTEGER, favourite INTEGER DEFAULT 0)")
         tx.executeSql("CREATE TABLE IF NOT EXISTS rolls (id INTEGER PRIMARY KEY AUTOINCREMENT, stockId INTEGER, pushIso INTEGER, cameraId INTEGER, lensId INTEGER, startDate TEXT, notes TEXT, closed INTEGER)")
         tx.executeSql("CREATE TABLE IF NOT EXISTS shots (id INTEGER PRIMARY KEY AUTOINCREMENT, rollId INTEGER, timestamp TEXT, ev REAL, aperture TEXT, shutterSpeed TEXT, iso INTEGER, photoPath TEXT)")
 
-        tx.executeSql("INSERT OR REPLACE INTO appmeta (key, value) VALUES ('schema_version', '2')")
+        tx.executeSql("INSERT OR REPLACE INTO appmeta (key, value) VALUES ('schema_version', '3')")
     })
 }
 
 // ── Cameras ──────────────────────────────────────────────────────────────────
-function addCamera(name, type, mount, bodySpeeds) {
+// type: 0 fixed lens, 1 interchangeable with the shutter in the body,
+// 2 interchangeable with a shutter in each lens. bodySpeeds is used by 0 and 1,
+// apertures by 0 only; the rest live on the lenses.
+function addCamera(name, type, mount, bodySpeeds, apertures) {
     var db = getDB()
     db.transaction(function(tx) {
-        tx.executeSql("INSERT INTO cameras (name, type, mount, bodySpeeds) VALUES (?,?,?,?)", [name, type, mount, bodySpeeds])
+        tx.executeSql("INSERT INTO cameras (name, type, mount, bodySpeeds, apertures) VALUES (?,?,?,?,?)", [name, type, mount || "", bodySpeeds || "", apertures || ""])
     })
 }
 
-function updateCamera(id, name, type, mount, bodySpeeds) {
+function updateCamera(id, name, type, mount, bodySpeeds, apertures) {
     var db = getDB()
     db.transaction(function(tx) {
-        tx.executeSql("UPDATE cameras SET name=?, type=?, mount=?, bodySpeeds=? WHERE id=?", [name, type, mount, bodySpeeds, id])
+        tx.executeSql("UPDATE cameras SET name=?, type=?, mount=?, bodySpeeds=?, apertures=? WHERE id=?", [name, type, mount || "", bodySpeeds || "", apertures || "", id])
     })
 }
 
@@ -64,7 +80,7 @@ function loadCameras(model) {
         model.clear()
         for (var i = 0; i < rs.rows.length; i++) {
             var row = rs.rows.item(i)
-            model.append({ id: row.id, name: row.name, type: row.type, mount: row.mount, bodySpeeds: row.bodySpeeds })
+            model.append({ id: row.id, name: row.name, type: row.type, mount: row.mount || "", bodySpeeds: row.bodySpeeds || "", apertures: row.apertures || "" })
         }
     })
 }
@@ -75,7 +91,7 @@ function getCamera(id) {
         var rs = tx.executeSql("SELECT * FROM cameras WHERE id=?", [id])
         if (rs.rows.length > 0) {
             var row = rs.rows.item(0)
-            out = { id: row.id, name: row.name, type: row.type, mount: row.mount, bodySpeeds: row.bodySpeeds }
+            out = { id: row.id, name: row.name, type: row.type, mount: row.mount || "", bodySpeeds: row.bodySpeeds || "", apertures: row.apertures || "" }
         }
     })
     return out
@@ -186,6 +202,52 @@ function loadStocks(model) {
     })
 }
 
+// Find a stock by name, or make it. The film catalogue is not in the database;
+// a catalogue film becomes a row the first time it is loaded or starred.
+function ensureStock(name, boxIso) {
+    var db = getDB(), id = -1
+    db.transaction(function(tx) {
+        var rs = tx.executeSql("SELECT id FROM stocks WHERE name=? COLLATE NOCASE", [name])
+        if (rs.rows.length > 0) {
+            id = rs.rows.item(0).id
+        } else {
+            var ins = tx.executeSql("INSERT INTO stocks (name, boxIso, favourite) VALUES (?,?,0)", [name, boxIso])
+            id = parseInt(ins.insertId)
+        }
+    })
+    return id
+}
+
+function setStockFavourite(id, on) {
+    var db = getDB()
+    db.transaction(function(tx) {
+        tx.executeSql("UPDATE stocks SET favourite=? WHERE id=?", [on ? 1 : 0, id])
+    })
+}
+
+// Every film the picker can offer: the user's own stocks, then catalogue
+// films not already among them, sorted by name. lastUsed is the start date of
+// the most recent roll of it, or "".
+function filmsForPicker(catalogue) {
+    var db = getDB(), out = [], seen = {}
+    db.transaction(function(tx) {
+        var rs = tx.executeSql("SELECT s.id, s.name, s.boxIso, IFNULL(s.favourite,0) AS favourite, IFNULL((SELECT MAX(r.startDate) FROM rolls r WHERE r.stockId=s.id),'') AS lastUsed FROM stocks s")
+        for (var i = 0; i < rs.rows.length; i++) {
+            var row = rs.rows.item(i)
+            out.push({ id: row.id, name: row.name, boxIso: row.boxIso,
+                       favourite: row.favourite === 1, lastUsed: row.lastUsed })
+            seen[row.name.toLowerCase()] = true
+        }
+    })
+    for (var j = 0; j < catalogue.length; j++) {
+        var c = catalogue[j]
+        if (seen[c.name.toLowerCase()]) continue
+        out.push({ id: -1, name: c.name, boxIso: c.iso, favourite: false, lastUsed: "" })
+    }
+    out.sort(function(a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1 })
+    return out
+}
+
 function getStock(id) {
     var db = getDB(), out = null
     db.transaction(function(tx) {
@@ -214,6 +276,24 @@ function updateRoll(id, stockId, pushIso, cameraId, lensId, notes) {
     db.transaction(function(tx) {
         tx.executeSql("UPDATE rolls SET stockId=?, pushIso=?, cameraId=?, lensId=?, notes=? WHERE id=?",
                       [stockId, pushIso, cameraId, lensId, notes, id])
+    })
+}
+
+// The film in a camera right now: its most recent open roll, or -1.
+function openRollForCamera(cameraId) {
+    var db = getDB(), id = -1
+    db.transaction(function(tx) {
+        var rs = tx.executeSql("SELECT id FROM rolls WHERE cameraId=? AND IFNULL(closed,0)=0 ORDER BY startDate DESC LIMIT 1", [cameraId])
+        if (rs.rows.length > 0) id = rs.rows.item(0).id
+    })
+    return id
+}
+
+// Loading a film closes whatever was in that camera before.
+function closeRollsForCamera(cameraId) {
+    var db = getDB()
+    db.transaction(function(tx) {
+        tx.executeSql("UPDATE rolls SET closed=1 WHERE cameraId=? AND IFNULL(closed,0)=0", [cameraId])
     })
 }
 
@@ -255,7 +335,7 @@ function loadRolls(model, includeClosed) {
 function getRoll(id) {
     var db = getDB(), out = null
     db.transaction(function(tx) {
-        var rs = tx.executeSql("SELECT r.*, s.name AS stockName, s.boxIso AS boxIso, c.name AS cameraName, c.type AS cameraType, c.mount AS mount, c.bodySpeeds AS bodySpeeds, l.name AS lensName, l.apertures AS apertures, l.speeds AS lensSpeeds FROM rolls r LEFT JOIN stocks s ON r.stockId=s.id LEFT JOIN cameras c ON r.cameraId=c.id LEFT JOIN lenses l ON r.lensId=l.id WHERE r.id=?", [id])
+        var rs = tx.executeSql("SELECT r.*, s.name AS stockName, s.boxIso AS boxIso, c.name AS cameraName, c.type AS cameraType, c.mount AS mount, c.bodySpeeds AS bodySpeeds, c.apertures AS cameraApertures, l.name AS lensName, l.apertures AS apertures, l.speeds AS lensSpeeds FROM rolls r LEFT JOIN stocks s ON r.stockId=s.id LEFT JOIN cameras c ON r.cameraId=c.id LEFT JOIN lenses l ON r.lensId=l.id WHERE r.id=?", [id])
         if (rs.rows.length > 0) {
             var row = rs.rows.item(0)
             out = {
@@ -264,6 +344,7 @@ function getRoll(id) {
                 notes: row.notes || "", stockName: row.stockName || "", boxIso: row.boxIso,
                 cameraName: row.cameraName || "", cameraType: row.cameraType,
                 mount: row.mount || "", bodySpeeds: row.bodySpeeds || "",
+                cameraApertures: row.cameraApertures || "",
                 lensName: row.lensName || "", apertures: row.apertures || "", lensSpeeds: row.lensSpeeds || ""
             }
         }

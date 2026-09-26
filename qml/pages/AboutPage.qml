@@ -3,12 +3,6 @@ import Sailfish.Silica 1.0
 import ".."
 import "../components"
 
-// DRAFT -- fiat lux is not built yet. "What it is" and "The name" below are
-// placeholder text in the family's voice, written from the roster's own
-// description ("a light meter for film"); replace both once the app has a
-// real shape. Everything else here (motto, data, made by, family, version,
-// colophon) follows the finished family template as-is.
-
 Page {
     id: page
 
@@ -156,6 +150,36 @@ Page {
                 font.pixelSize: Theme.fontSizeExtraSmall
                 color: FiatLuxTheme.secondaryText
                 text: qsTr("Everything stays on this phone. There is no account, no network access, and nothing is measured or reported.")
+            }
+
+            // -- Where it works -----------------------------------------------
+
+            SectionLabel {
+                x: Theme.horizontalPageMargin
+                text: qsTr("Where it works")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeExtraSmall
+                color: FiatLuxTheme.secondaryText
+                text: qsTr("Fiat Lux meters through the camera with RAWfish's Camera2 helper, so RAWfish has to be installed. It has only been tested on the Jolla Phone (2026), where it reads 4 stops low out of the box; Calibrate starts at +4 to correct that. On any other phone, check it against a meter you trust before you trust it with film.")
+            }
+
+            BackgroundItem {
+                width: parent.width
+                height: Theme.itemSizeSmall
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: pageStack.push(Qt.resolvedUrl("IntroPage.qml"))
+                Label {
+                    x: Theme.horizontalPageMargin
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("Show the introduction again")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: FiatLuxTheme.accent
+                }
             }
 
             // -- Who ---------------------------------------------------------

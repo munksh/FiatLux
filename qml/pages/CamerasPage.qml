@@ -17,7 +17,7 @@ Page {
         }
     }
 
-    property var typeLabels: ["Fixed", "SLR / RF", "Leaf"]
+    property var typeLabels: ["built-in lens", "shutter in body", "shutter in lens"]
     property int activeItemId: -1
 
     SilicaListView {
@@ -29,7 +29,7 @@ Page {
             backgroundColor: FiatLuxTheme.surface
             highlightColor: FiatLuxTheme.amber
             MenuItem {
-                text: "New roll"; color: FiatLuxTheme.primaryText
+                text: "Load film"; color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"))
             }
             MenuItem {

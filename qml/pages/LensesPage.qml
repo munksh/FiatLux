@@ -28,7 +28,7 @@ Page {
             backgroundColor: FiatLuxTheme.surface
             highlightColor: FiatLuxTheme.amber
             MenuItem {
-                text: "New roll"; color: FiatLuxTheme.primaryText
+                text: "Load film"; color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"))
             }
             MenuItem {

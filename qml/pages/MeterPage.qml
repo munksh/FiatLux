@@ -28,6 +28,32 @@ Page {
     property bool editingIso: false
     property int shotCount: 0
 
+    // The camera being metered for (-1 = Quick Meter) and the film in it.
+    // Only Quick Meter lets you pick an ISO; a camera meters its film's.
+    property int cameraId: -1
+    property string filmLabel: ""
+    property string cameraApertures: ""
+    readonly property bool quickMeter: page.cameraId < 0
+
+    // Raise when the introduction changes enough to be worth showing again.
+    readonly property int introVersion: 1
+    property bool introChecked: false
+    ConfigurationValue { id: cfgIntro; key: "/apps/harbour-fiatlux/introVersion"; defaultValue: 0 }
+    Timer {
+        id: introTimer
+        interval: 400
+        onTriggered: {
+            if (cfgIntro.value < page.introVersion)
+                pageStack.push(Qt.resolvedUrl("IntroPage.qml"), { version: page.introVersion })
+        }
+    }
+    onStatusChanged: {
+        if (status === PageStatus.Active && !page.introChecked) {
+            page.introChecked = true
+            introTimer.start()
+        }
+    }
+
     // Fallback only. picturesPath() asks the platform first.
     property string picturesDir: "/home/defaultuser/Pictures"
 
@@ -82,7 +108,7 @@ Page {
         cfgSpeed.value = s[k]
         cfgCamera.value = page.sourceLabel
         cfgIso.value = page.iso
-        cfgFilm.value = page.rollId >= 0 ? page.sourceLabel : ""
+        cfgFilm.value = page.rollId >= 0 ? page.filmLabel : ""
     }
 
     // ---- the current pair, as bindings rather than function calls ---------
@@ -126,28 +152,40 @@ Page {
 
     function loadQuick() {
         rollId = -1
+        cameraId = -1
         sourceLabel = "Quick Meter"
+        filmLabel = ""
         cameraType = 0
         mount = ""
         bodySpeeds = ""
+        cameraApertures = ""
         iso = 400
         isoLocked = false
         compatLenses = []
         lensIndex = 0
+        shotCount = 0
         applyLens()
     }
 
+    // A camera with film in it meters that film. An empty one keeps the last
+    // ISO and asks for film.
     function loadCamera(id) {
+        var open = Storage.openRollForCamera(id)
+        if (open >= 0) { loadRoll(open); return }
         var c = Storage.getCamera(id)
         if (!c) { loadQuick(); return }
+        rollId = -1
+        cameraId = c.id
         sourceLabel = c.name
+        filmLabel = ""
         cameraType = c.type
-        mount = c.mount
+        mount = c.mount || ""
         bodySpeeds = c.bodySpeeds || ""
-        iso = 400
-        isoLocked = false
-        compatLenses = Storage.lensesForMount(mount)
+        cameraApertures = c.apertures || ""
+        isoLocked = true
+        compatLenses = cameraType !== 0 && mount.length > 0 ? Storage.lensesForMount(mount) : []
         lensIndex = 0
+        shotCount = 0
         applyLens()
     }
 
@@ -155,14 +193,16 @@ Page {
         var r = Storage.getRoll(id)
         if (!r) { loadQuick(); return }
         rollId = id
-        sourceLabel = r.stockName !== "" ? r.stockName
-                    : (r.cameraName !== "" ? r.cameraName : "Roll")
+        cameraId = r.cameraId ? r.cameraId : -1
+        sourceLabel = r.cameraName !== "" ? r.cameraName : "Quick Meter"
+        filmLabel = r.stockName
         cameraType = r.cameraType ? r.cameraType : 0
         mount = r.mount || ""
         bodySpeeds = r.bodySpeeds || ""
+        cameraApertures = r.cameraApertures || ""
         iso = r.pushIso
         isoLocked = true
-        compatLenses = mount.length > 0 ? Storage.lensesForMount(mount) : []
+        compatLenses = cameraType !== 0 && mount.length > 0 ? Storage.lensesForMount(mount) : []
         lensIndex = 0
         for (var i = 0; i < compatLenses.length; i++) {
             if (compatLenses[i].id === r.lensId) {
@@ -174,27 +214,30 @@ Page {
         shotCount = Storage.shotCountForRoll(id)
     }
 
+    // Where the apertures and speeds come from:
+    //   fixed lens      both from the camera
+    //   otherwise       apertures from the lens; speeds from the lens, else
+    //                   the body, else the defaults (the data is incomplete)
+    // split() always returns a fresh array, and a new array identity is what
+    // makes the ListView rebuild.
     function applyLens() {
-        if (compatLenses.length > 0) {
+        var bSpeeds = (bodySpeeds && bodySpeeds.length > 0) ? bodySpeeds : ""
+        if (cameraType === 0 && cameraApertures.length > 0) {
+            lens = ""
+            apertures = cameraApertures.split(",")
+            shutterSpeeds = bSpeeds.length > 0 ? bSpeeds.split(",") : defaultSpeeds.slice()
+        } else if (compatLenses.length > 0) {
             var l = compatLenses[lensIndex]
             lens = l.name
-            // split() always returns a fresh array -- no stale reference, and
-            // a new array identity is what makes the ListView rebuild.
             apertures = (l.apertures || "").split(",")
-
-            // Speed priority:
-            //   1. Lens's own speeds (leaf and fixed lenses fill this in)
-            //   2. Body speeds (SLR lenses leave lens speeds empty on purpose)
-            //   3. Defaults (last resort -- means the data is incomplete)
             var lSpeeds = (l.speeds && l.speeds.length > 0) ? l.speeds : ""
-            var bSpeeds = (bodySpeeds && bodySpeeds.length > 0) ? bodySpeeds : ""
             if (lSpeeds.length > 0) shutterSpeeds = lSpeeds.split(",")
             else if (bSpeeds.length > 0) shutterSpeeds = bSpeeds.split(",")
             else shutterSpeeds = defaultSpeeds.slice()
         } else {
             lens = ""
             apertures = defaultApertures.slice()
-            shutterSpeeds = defaultSpeeds.slice()
+            shutterSpeeds = bSpeeds.length > 0 ? bSpeeds.split(",") : defaultSpeeds.slice()
         }
     }
 
@@ -283,10 +326,7 @@ Page {
                     : qsTr("no reading from the camera yet")
             return
         }
-        page.meterNote = qsTr("reflected \u00b7 f/%1 \u00b7 %2 \u00b7 ISO %3")
-                .arg(meter.aperture.toFixed(2))
-                .arg(page.formatSeconds(meter.exposureTime))
-                .arg(meter.iso)
+        page.meterNote = ""
         page.ev = meter.ev100 + page.evCalibration
         page.evLocked = true
         exposureList.currentIndex = page.suggestIndex()
@@ -455,18 +495,20 @@ Page {
             }
             MenuItem {
                 visible: page.rollId >= 0
-                text: qsTr("Close roll")
+                text: qsTr("Unload film")
                 color: FiatLuxTheme.primaryText
                 onClicked: {
+                    var cam = page.cameraId
                     Storage.closeRoll(page.rollId)
                     app.reloadRolls()
-                    page.loadQuick()
+                    if (cam >= 0) page.loadCamera(cam)
+                    else page.loadQuick()
                 }
             }
             MenuItem {
-                text: qsTr("New roll")
+                text: qsTr("Load film")
                 color: FiatLuxTheme.primaryText
-                onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { returnToMeter: true })
+                onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
             }
             MenuItem {
                 text: qsTr("Film stocks")
@@ -524,7 +566,10 @@ Page {
                     onClicked: {
                         var arr = ["Quick Meter"]
                         for (var i = 0; i < app.cameraModel.count; i++) {
-                            arr.push(app.cameraModel.get(i).name)
+                            var c = app.cameraModel.get(i)
+                            var r = Storage.openRollForCamera(c.id)
+                            var film = r >= 0 ? Storage.getRoll(r) : null
+                            arr.push(film ? c.name + " \u00b7 " + film.stockName : c.name)
                         }
                         sourceMenu.items = arr
                         sourceMenu.show(sourcePill)
@@ -542,9 +587,7 @@ Page {
                         anchors.centerIn: parent
                         spacing: Theme.paddingSmall
                         Text {
-                            text: page.rollId >= 0
-                                  ? page.sourceLabel + " � " + page.shotCount + "fr"
-                                  : page.sourceLabel
+                            text: page.sourceLabel
                             color: FiatLuxTheme.primaryText
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: FiatLuxTheme.serif
@@ -641,30 +684,51 @@ Page {
                     }
                 }
 
+                // The strip that is burnt into every logged frame: the pair,
+                // the film speed, and which camera, film and frame it was.
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    height: hudRow.height + Theme.paddingMedium * 2
+                    height: hudCol.height + Theme.paddingMedium * 2
                     color: Qt.rgba(0, 0, 0, 0.65)
-                    Row {
-                        id: hudRow
+                    Column {
+                        id: hudCol
                         anchors.centerIn: parent
-                        spacing: Theme.paddingLarge
-                        Text {
-                            text: "f/" + page.currentApertureText
-                            color: FiatLuxTheme.viewfinderText
-                            font.pixelSize: Theme.fontSizeMedium
+                        width: parent.width - Theme.horizontalPageMargin * 2
+                        spacing: Theme.paddingSmall
+                        Row {
+                            id: hudRow
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            spacing: Theme.paddingLarge
+                            Text {
+                                text: "f/" + page.currentApertureText
+                                color: FiatLuxTheme.viewfinderText
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
+                            Text {
+                                text: page.currentSpeedText
+                                color: FiatLuxTheme.viewfinderAccent
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
+                            Text {
+                                text: "ISO " + page.iso
+                                color: FiatLuxTheme.viewfinderText
+                                font.pixelSize: Theme.fontSizeMedium
+                            }
                         }
                         Text {
-                            text: page.currentSpeedText
-                            color: FiatLuxTheme.viewfinderAccent
-                            font.pixelSize: Theme.fontSizeMedium
-                        }
-                        Text {
-                            text: "ISO " + page.iso
+                            visible: !page.quickMeter
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideMiddle
+                            text: page.rollId >= 0
+                                  ? page.sourceLabel + "  \u00b7  " + page.filmLabel
+                                    + "  \u00b7  " + qsTr("frame %1").arg(page.shotCount + 1)
+                                  : page.sourceLabel + "  \u00b7  " + qsTr("no film")
                             color: FiatLuxTheme.viewfinderText
-                            font.pixelSize: Theme.fontSizeMedium
+                            opacity: 0.8
+                            font.pixelSize: Theme.fontSizeExtraSmall
                         }
                     }
                 }
@@ -780,7 +844,7 @@ Page {
 
                 BackgroundItem {
                     id: isoBtn
-                    visible: !page.editingIso
+                    visible: !page.editingIso && page.quickMeter
                     width: isoPillBg.width
                     height: isoPillBg.height
                     highlightedColor: FiatLuxTheme.highlightWash
@@ -830,6 +894,35 @@ Page {
                         onClicked: {
                             page.editingIso = false
                             page.publishReading()
+                        }
+                    }
+                }
+
+                // A camera with no film: the ISO is the film's, so ask for film.
+                BackgroundItem {
+                    id: loadFilmBtn
+                    visible: !page.quickMeter && page.rollId < 0
+                    width: loadFilmBg.width
+                    height: loadFilmBg.height
+                    highlightedColor: FiatLuxTheme.highlightWash
+                    onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
+                    Rectangle {
+                        id: loadFilmBg
+                        radius: height / 2
+                        color: loadFilmBtn.highlighted ? FiatLuxTheme.pillFillActive
+                                                       : FiatLuxTheme.pillFill
+                        border.color: FiatLuxTheme.pillBorderActive
+                        border.width: 1
+                        width: loadFilmLbl.width + Theme.paddingLarge * 2
+                        height: loadFilmLbl.height + Theme.paddingMedium
+                        Text {
+                            id: loadFilmLbl
+                            anchors.centerIn: parent
+                            text: qsTr("load film")
+                            color: FiatLuxTheme.accent
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: FiatLuxTheme.serif
+                            font.italic: true
                         }
                     }
                 }
