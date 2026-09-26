@@ -2,6 +2,7 @@ import QtQuick 2.0
 import Sailfish.Silica 1.0
 import "../Storage.js" as Storage
 import ".." 1.0
+import "../components"
 
 // A camera is described by the two questions a light meter needs answered:
 // can the lens come off, and if it can, is the shutter in the body or in each
@@ -23,6 +24,12 @@ Page {
             GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
             GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
         }
+    }
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
     }
 
     property int editId: -1
@@ -57,6 +64,7 @@ Page {
     property var knownMounts: []
 
     Component.onCompleted: {
+        paint()
         knownMounts = Storage.mounts()
         if (editId >= 0) {
             var c = Storage.getCamera(editId)
@@ -122,18 +130,9 @@ Page {
             width: page.width
             spacing: Theme.paddingLarge
 
-            Item { width: 1; height: Theme.paddingLarge }
-
-            Item {
-                width: parent.width; height: Theme.itemSizeLarge
-                Text {
-                    anchors.centerIn: parent
-                    text: page.editId >= 0 ? qsTr("edit camera") : qsTr("add camera")
-                    color: FiatLuxTheme.primaryText
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.family: FiatLuxTheme.serif
-                    font.italic: true
-                }
+            PageHead {
+                title: page.editId >= 0 ? qsTr("edit camera") : qsTr("add camera")
+                subtitle: "fiat lux"
             }
 
             CardSection {

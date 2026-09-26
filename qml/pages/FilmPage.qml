@@ -45,14 +45,9 @@ Page {
             }
         }
 
-        header: Item {
-            width: page.width; height: Theme.itemSizeLarge
-            Text {
-                anchors.centerIn: parent; text: "film stocks"
-                color: FiatLuxTheme.primaryText
-                font.pixelSize: Theme.fontSizeMedium
-                font.family: FiatLuxTheme.serif; font.italic: true
-            }
+        header: PageHead {
+            title: "film stocks"
+            subtitle: "fiat lux"
         }
 
         ViewPlaceholder {
@@ -60,14 +55,31 @@ Page {
             text: "Pull down to add a film stock"
         }
 
-        delegate: BackgroundItem {
+        delegate: ListItem {
             id: item
             width: ListView.view.width
-            height: card.height + Theme.paddingSmall * 2
-            onClicked: {
-                page.activeItemId = model.id
-                itemMenu.items = ["Edit", "Delete"]
-                itemMenu.show(item)
+            contentHeight: card.height + Theme.paddingSmall * 2
+            readonly property int itemId: model.id
+            onClicked: openMenu()
+
+            menu: ContextMenu {
+                highlightColor: FiatLuxTheme.accent
+                MenuItem {
+                    text: qsTr("Edit")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"), { editId: item.itemId })
+                }
+                MenuItem {
+                    text: qsTr("Delete")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: {
+                        var id = item.itemId
+                        item.remorseAction(qsTr("Deleting"), function() {
+                            Storage.deleteStock(id)
+                            app.reloadStocks()
+                        })
+                    }
+                }
             }
 
             Rectangle {
@@ -115,14 +127,4 @@ Page {
         }
     }
 
-    PillMenu {
-        id: itemMenu
-        onPicked: function(idx) {
-            if (idx === 0) pageStack.push(Qt.resolvedUrl("AddStockPage.qml"), { editId: page.activeItemId })
-            else if (idx === 1) {
-                Storage.deleteStock(page.activeItemId)
-                app.reloadStocks()
-            }
-        }
-    }
 }

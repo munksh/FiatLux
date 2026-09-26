@@ -35,6 +35,70 @@ Page {
     property string cameraApertures: ""
     readonly property bool quickMeter: page.cameraId < 0
 
+    // ---- dropdown state ----
+    //
+    // A ComboBox takes its index from its menu items, which a Repeater only
+    // creates after its model is set, so the indexes are set a beat later.
+    property var sourceChoices: []
+    readonly property var standardIsos: [25, 50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 3200, 6400]
+    readonly property var isoChoices: {
+        var l = standardIsos.slice()
+        if (l.indexOf(page.iso) === -1) {
+            l.push(page.iso)
+            l.sort(function(a, b) { return a - b })
+        }
+        return l
+    }
+
+    function refreshSources() {
+        var arr = [{ id: -1, label: qsTr("Quick Meter") }]
+        for (var i = 0; i < app.cameraModel.count; i++) {
+            var c = app.cameraModel.get(i)
+            var r = Storage.openRollForCamera(c.id)
+            var film = r >= 0 ? Storage.getRoll(r) : null
+            arr.push({ id: c.id, label: film ? c.name + "  \u00b7  " + film.stockName : c.name })
+        }
+        sourceChoices = arr
+        syncTimer.restart()
+    }
+
+    function chooseSource(id) {
+        page.evLocked = false
+        page.meterNote = ""
+        if (id < 0) page.loadQuick()
+        else page.loadCamera(id)
+    }
+
+    function acceptIso() {
+        var n = parseInt(isoEditor.text)
+        if (!isNaN(n) && n > 0) page.iso = n
+        page.editingIso = false
+        page.publishReading()
+    }
+
+    Timer {
+        id: syncTimer
+        interval: 0
+        onTriggered: {
+            for (var i = 0; i < page.sourceChoices.length; i++) {
+                if (page.sourceChoices[i].id === page.cameraId) { cameraCombo.currentIndex = i; break }
+            }
+            isoCombo.currentIndex = page.isoChoices.indexOf(page.iso)
+            lensCombo.currentIndex = page.compatLenses.length > 0 ? page.lensIndex : -1
+        }
+    }
+    onCameraIdChanged: syncTimer.restart()
+    onRollIdChanged: refreshSources()
+    onIsoChanged: syncTimer.restart()
+    onLensIndexChanged: syncTimer.restart()
+    onCompatLensesChanged: syncTimer.restart()
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
+
     // Raise when the introduction changes enough to be worth showing again.
     readonly property int introVersion: 1
     property bool introChecked: false
@@ -48,6 +112,10 @@ Page {
         }
     }
     onStatusChanged: {
+        if (status === PageStatus.Active) {
+            page.paint()
+            page.refreshSources()
+        }
         if (status === PageStatus.Active && !page.introChecked) {
             page.introChecked = true
             introTimer.start()
@@ -534,12 +602,11 @@ Page {
 
             // ---- top bar ----
             //
-            // The wordmark and the source pill both sit ON the system indicator
-            // row rather than below it. They are short and they live in the
-            // corners, so the centred cutout never reaches either.
+            // The wordmark alone, on the system indicator row, as in every Fiat
+            // app. The camera choice lives below the pairs, clear of the cutout.
             Item {
                 width: parent.width
-                height: FiatLuxTheme.statusRowCenter + sourcePill.height / 2 + Theme.paddingMedium
+                height: FiatLuxTheme.statusRowCenter + wordmark.height / 2 + Theme.paddingMedium
 
                 Text {
                     id: wordmark
@@ -552,53 +619,6 @@ Page {
                     font.pixelSize: Theme.fontSizeLarge
                     font.family: FiatLuxTheme.serif
                     font.italic: true
-                }
-
-                BackgroundItem {
-                    id: sourcePill
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.horizontalPageMargin
-                    anchors.top: parent.top
-                    anchors.topMargin: Math.max(0, FiatLuxTheme.statusRowCenter - height / 2)
-                    width: pillRow.width + Theme.paddingLarge * 2
-                    height: Theme.itemSizeSmall
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: {
-                        var arr = ["Quick Meter"]
-                        for (var i = 0; i < app.cameraModel.count; i++) {
-                            var c = app.cameraModel.get(i)
-                            var r = Storage.openRollForCamera(c.id)
-                            var film = r >= 0 ? Storage.getRoll(r) : null
-                            arr.push(film ? c.name + " \u00b7 " + film.stockName : c.name)
-                        }
-                        sourceMenu.items = arr
-                        sourceMenu.show(sourcePill)
-                    }
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: height / 2
-                        color: sourcePill.highlighted ? FiatLuxTheme.pillFillActive
-                                                      : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorderActive
-                        border.width: 1
-                    }
-                    Row {
-                        id: pillRow
-                        anchors.centerIn: parent
-                        spacing: Theme.paddingSmall
-                        Text {
-                            text: page.sourceLabel
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif
-                            font.italic: true
-                        }
-                        Text {
-                            text: "\u25be"
-                            color: FiatLuxTheme.accent
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
                 }
             }
 
@@ -837,130 +857,125 @@ Page {
                 }
             }
 
-            // ---- ISO and lens ----
-            Row {
-                x: Theme.horizontalPageMargin
-                spacing: Theme.paddingMedium
-
-                BackgroundItem {
-                    id: isoBtn
-                    visible: !page.editingIso && page.quickMeter
-                    width: isoPillBg.width
-                    height: isoPillBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: isoMenu.show(isoBtn)
-                    Rectangle {
-                        id: isoPillBg
-                        radius: height / 2
-                        color: isoBtn.highlighted ? FiatLuxTheme.pillFillActive
-                                                  : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        width: isoLbl.width + Theme.paddingLarge * 2
-                        height: isoLbl.height + Theme.paddingMedium
-                        Text {
-                            id: isoLbl
-                            anchors.centerIn: parent
-                            text: "ISO " + page.iso
+            // ---- what is being metered ----
+            //
+            // Dropdowns, as in the rest of the family. Only Quick Meter has an
+            // ISO to choose; a camera meters at the speed of the film in it.
+            ComboBox {
+                id: cameraCombo
+                width: parent.width
+                label: qsTr("camera")
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: page.sourceChoices
+                        MenuItem {
+                            text: modelData.label
                             color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
+                            onClicked: page.chooseSource(modelData.id)
+                        }
+                    }
+                }
+            }
+
+            Row {
+                width: parent.width
+
+                ComboBox {
+                    id: isoCombo
+                    visible: page.quickMeter && !page.editingIso
+                    width: lensCombo.visible ? parent.width / 2 : parent.width
+                    label: qsTr("ISO")
+                    menu: ContextMenu {
+                        highlightColor: FiatLuxTheme.accent
+                        Repeater {
+                            model: page.isoChoices
+                            MenuItem {
+                                text: modelData
+                                color: FiatLuxTheme.primaryText
+                                onClicked: {
+                                    page.iso = modelData
+                                    page.publishReading()
+                                }
+                            }
+                        }
+                        MenuItem {
+                            text: qsTr("other\u2026")
+                            color: FiatLuxTheme.primaryText
+                            onClicked: page.editingIso = true
                         }
                     }
                 }
 
                 Row {
-                    visible: page.editingIso
+                    visible: page.quickMeter && page.editingIso
+                    x: Theme.horizontalPageMargin
                     spacing: Theme.paddingSmall
                     TextField {
                         id: isoEditor
-                        width: Theme.itemSizeMedium
+                        width: Theme.itemSizeHuge
+                        label: qsTr("ISO")
                         text: page.iso.toString()
                         color: FiatLuxTheme.primaryText
                         inputMethodHints: Qt.ImhDigitsOnly
                         maximumLength: 5
                         validator: IntValidator { bottom: 1; top: 99999 }
-                        onTextChanged: {
-                            var n = parseInt(text)
-                            if (!isNaN(n) && n > 0) page.iso = n
-                        }
-                        EnterKey.onClicked: {
-                            page.editingIso = false
-                            page.publishReading()
-                        }
+                        EnterKey.onClicked: page.acceptIso()
                     }
                     IconButton {
                         anchors.verticalCenter: parent.verticalCenter
                         icon.source: "image://theme/icon-m-accept"
-                        onClicked: {
-                            page.editingIso = false
-                            page.publishReading()
-                        }
+                        onClicked: page.acceptIso()
                     }
                 }
 
-                // A camera with no film: the ISO is the film's, so ask for film.
-                BackgroundItem {
-                    id: loadFilmBtn
-                    visible: !page.quickMeter && page.rollId < 0
-                    width: loadFilmBg.width
-                    height: loadFilmBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
-                    Rectangle {
-                        id: loadFilmBg
-                        radius: height / 2
-                        color: loadFilmBtn.highlighted ? FiatLuxTheme.pillFillActive
-                                                       : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorderActive
-                        border.width: 1
-                        width: loadFilmLbl.width + Theme.paddingLarge * 2
-                        height: loadFilmLbl.height + Theme.paddingMedium
-                        Text {
-                            id: loadFilmLbl
-                            anchors.centerIn: parent
-                            text: qsTr("load film")
-                            color: FiatLuxTheme.accent
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif
-                            font.italic: true
+                ComboBox {
+                    id: lensCombo
+                    visible: page.compatLenses.length > 0
+                    width: isoCombo.visible ? parent.width / 2 : parent.width
+                    label: qsTr("lens")
+                    menu: ContextMenu {
+                        highlightColor: FiatLuxTheme.accent
+                        Repeater {
+                            model: page.compatLenses
+                            MenuItem {
+                                text: modelData.name
+                                color: FiatLuxTheme.primaryText
+                                onClicked: {
+                                    page.lensIndex = index
+                                    page.applyLens()
+                                }
+                            }
                         }
                     }
                 }
+            }
 
-                BackgroundItem {
-                    id: lensBtn
-                    visible: page.lens.length > 0
-                    width: lensPillBg.width
-                    height: lensPillBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: {
-                        if (page.compatLenses.length <= 1) return
-                        var arr = []
-                        for (var i = 0; i < page.compatLenses.length; i++) {
-                            arr.push(page.compatLenses[i].name)
-                        }
-                        lensMenu.items = arr
-                        lensMenu.show(lensBtn)
-                    }
-                    Rectangle {
-                        id: lensPillBg
-                        radius: height / 2
-                        color: lensBtn.highlighted ? FiatLuxTheme.pillFillActive
-                                                   : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        width: Math.min(lensLbl.implicitWidth + Theme.paddingLarge * 2,
-                                        page.width - 2 * Theme.horizontalPageMargin - 160)
-                        height: lensLbl.height + Theme.paddingMedium
-                        Text {
-                            id: lensLbl
-                            anchors.centerIn: parent
-                            width: parent.width - Theme.paddingLarge * 2
-                            text: page.lens
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            elide: Text.ElideRight
-                        }
+            // A camera with no film: the ISO is the film's, so ask for film.
+            BackgroundItem {
+                id: loadFilmBtn
+                visible: !page.quickMeter && page.rollId < 0
+                x: Theme.horizontalPageMargin
+                width: loadFilmBg.width
+                height: loadFilmBg.height
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: page.cameraId })
+                Rectangle {
+                    id: loadFilmBg
+                    radius: height / 2
+                    color: loadFilmBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
+                    border.color: FiatLuxTheme.pillBorderActive
+                    border.width: 1
+                    width: loadFilmLbl.width + Theme.paddingLarge * 2
+                    height: loadFilmLbl.height + Theme.paddingMedium
+                    Text {
+                        id: loadFilmLbl
+                        anchors.centerIn: parent
+                        text: qsTr("load film")
+                        color: FiatLuxTheme.accent
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: FiatLuxTheme.serif
+                        font.italic: true
                     }
                 }
             }
@@ -1072,34 +1087,4 @@ Page {
         }
     }
 
-    PillMenu {
-        id: sourceMenu
-        onPicked: function(idx) {
-            page.evLocked = false
-            page.meterNote = ""
-            if (idx === 0) page.loadQuick()
-            else page.loadCamera(app.cameraModel.get(idx - 1).id)
-        }
-    }
-
-    PillMenu {
-        id: isoMenu
-        items: [25,50,64,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2500,3200,6400,"Custom\u2026"]
-        onPicked: function(idx) {
-            if (typeof items[idx] === "string") {
-                page.editingIso = true
-            } else {
-                page.iso = items[idx]
-                page.publishReading()
-            }
-        }
-    }
-
-    PillMenu {
-        id: lensMenu
-        onPicked: function(idx) {
-            page.lensIndex = idx
-            page.applyLens()
-        }
-    }
 }

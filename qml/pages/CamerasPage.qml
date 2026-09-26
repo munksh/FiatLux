@@ -46,14 +46,9 @@ Page {
             }
         }
 
-        header: Item {
-            width: page.width; height: Theme.itemSizeLarge
-            Text {
-                anchors.centerIn: parent; text: "cameras"
-                color: FiatLuxTheme.primaryText
-                font.pixelSize: Theme.fontSizeMedium
-                font.family: FiatLuxTheme.serif; font.italic: true
-            }
+        header: PageHead {
+            title: "cameras"
+            subtitle: "fiat lux"
         }
 
         ViewPlaceholder {
@@ -61,14 +56,41 @@ Page {
             text: "Pull down to add a camera"
         }
 
-        delegate: BackgroundItem {
+        delegate: ListItem {
             id: item
             width: ListView.view.width
-            height: card.height + Theme.paddingSmall * 2
-            onClicked: {
-                page.activeItemId = model.id
-                itemMenu.items = ["Meter with this camera", "Edit", "Delete"]
-                itemMenu.show(item)
+            contentHeight: card.height + Theme.paddingSmall * 2
+            readonly property int itemId: model.id
+            onClicked: openMenu()
+
+            menu: ContextMenu {
+                highlightColor: FiatLuxTheme.accent
+                MenuItem {
+                    text: qsTr("Meter with this camera")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: pageStack.push(Qt.resolvedUrl("MeterPage.qml"), { presetCameraId: item.itemId })
+                }
+                MenuItem {
+                    text: qsTr("Load film")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"), { presetCameraId: item.itemId })
+                }
+                MenuItem {
+                    text: qsTr("Edit")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: pageStack.push(Qt.resolvedUrl("AddCameraPage.qml"), { editId: item.itemId })
+                }
+                MenuItem {
+                    text: qsTr("Delete")
+                    color: FiatLuxTheme.primaryText
+                    onClicked: {
+                        var id = item.itemId
+                        item.remorseAction(qsTr("Deleting"), function() {
+                            Storage.deleteCamera(id)
+                            app.reloadCameras()
+                        })
+                    }
+                }
             }
 
             Rectangle {
@@ -128,15 +150,4 @@ Page {
         }
     }
 
-    PillMenu {
-        id: itemMenu
-        onPicked: function(idx) {
-            if (idx === 0) pageStack.push(Qt.resolvedUrl("MeterPage.qml"), { presetCameraId: page.activeItemId })
-            else if (idx === 1) pageStack.push(Qt.resolvedUrl("AddCameraPage.qml"), { editId: page.activeItemId })
-            else if (idx === 2) {
-                Storage.deleteCamera(page.activeItemId)
-                app.reloadCameras()
-            }
-        }
-    }
 }

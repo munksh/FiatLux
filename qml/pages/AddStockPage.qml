@@ -2,6 +2,7 @@ import QtQuick 2.0
 import Sailfish.Silica 1.0
 import "../Storage.js" as Storage
 import ".." 1.0
+import "../components"
 
 Page {
     id: page
@@ -40,15 +41,9 @@ Page {
             width: page.width
             spacing: Theme.paddingLarge
 
-            Item {
-                width: parent.width; height: Theme.itemSizeLarge
-                Text {
-                    anchors.centerIn: parent
-                    text: editId >= 0 ? "edit film stock" : "add film stock"
-                    color: FiatLuxTheme.primaryText
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.family: FiatLuxTheme.serif; font.italic: true
-                }
+            PageHead {
+                title: editId >= 0 ? "edit film stock" : "add film stock"
+                subtitle: "fiat lux"
             }
 
             CardSection {

@@ -3,10 +3,14 @@ import Sailfish.Silica 1.0
 import "../Storage.js" as Storage
 import "../FilmCatalogue.js" as Catalogue
 import ".." 1.0
+import "../components"
 
 // Load film: which camera, which film, and the speed you shoot it at. Loading
 // a film into a camera closes whatever roll was in it before; that roll and
 // its shots stay in the log.
+//
+// The film list folds away once a film is chosen, so the speed and the load
+// button come up under it instead of below fifty other films.
 
 Page {
     id: page
@@ -22,17 +26,21 @@ Page {
         }
     }
 
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
+
     // Accepted from older call sites; the page always returns to the meter.
     property bool returnToMeter: true
     property int presetCameraId: -1
 
     property int cameraId: -1
     property int cameraType: -1
-    property string cameraLabel: qsTr("tap to choose")
     property string cameraMount: ""
     property var compatLenses: []
     property int lensId: -1
-    property string lensLabel: qsTr("tap to choose")
 
     property var films: []
     property var film: null      // { id, name, boxIso }
@@ -41,6 +49,7 @@ Page {
     readonly property bool canLoad: film !== null && cameraId >= 0 && parseInt(isoField.text) > 0
 
     Component.onCompleted: {
+        paint()
         refreshFilms()
         if (presetCameraId >= 0) chooseCamera(Storage.getCamera(presetCameraId))
         else if (app.cameraModel.count === 1) chooseCamera(app.cameraModel.get(0))
@@ -48,6 +57,23 @@ Page {
 
     // Back from "add a film that isn't listed": pick up what was added.
     onStatusChanged: if (status === PageStatus.Active) refreshFilms()
+
+    // A ComboBox takes its index from the menu items, which a Repeater only
+    // creates after the model is set -- so the index is set a beat later.
+    Timer {
+        id: syncTimer
+        interval: 0
+        onTriggered: {
+            for (var i = 0; i < app.cameraModel.count; i++) {
+                if (app.cameraModel.get(i).id === page.cameraId) { cameraCombo.currentIndex = i; break }
+            }
+            var k = -1
+            for (var j = 0; j < page.compatLenses.length; j++) {
+                if (page.compatLenses[j].id === page.lensId) { k = j; break }
+            }
+            lensCombo.currentIndex = k
+        }
+    }
 
     function refreshFilms() {
         films = Storage.filmsForPicker(Catalogue.films)
@@ -57,11 +83,10 @@ Page {
         if (!c) return
         cameraId = c.id
         cameraType = c.type
-        cameraLabel = c.name
         cameraMount = c.mount || ""
         compatLenses = cameraType !== 0 && cameraMount.length > 0 ? Storage.lensesForMount(cameraMount) : []
         lensId = compatLenses.length === 1 ? compatLenses[0].id : -1
-        lensLabel = compatLenses.length === 1 ? compatLenses[0].name : qsTr("tap to choose")
+        syncTimer.restart()
     }
 
     function chooseFilm(f) {
@@ -75,7 +100,6 @@ Page {
     function toggleFavourite(f) {
         var id = f.id >= 0 ? f.id : Storage.ensureStock(f.name, f.boxIso)
         Storage.setStockFavourite(id, !f.favourite)
-        if (film && film.name === f.name) film = { id: id, name: f.name, boxIso: f.boxIso }
         app.reloadStocks()
         refreshFilms()
     }
@@ -133,6 +157,45 @@ Page {
         }
     }
 
+    // A five-pointed star: filled for a favourite, outlined otherwise.
+    Component {
+        id: starMark
+        Canvas {
+            id: star
+            property bool on: false
+            property color fill: FiatLuxTheme.accent
+            property color line: FiatLuxTheme.pillBorder
+            width: Theme.iconSizeSmall
+            height: width
+            onOnChanged: requestPaint()
+            onFillChanged: requestPaint()
+            onLineChanged: requestPaint()
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                var cx = width / 2, cy = height / 2 + height * 0.04
+                var outer = width * 0.47, inner = outer * 0.42
+                ctx.beginPath()
+                for (var i = 0; i < 10; i++) {
+                    var a = -Math.PI / 2 + i * Math.PI / 5
+                    var rad = i % 2 === 0 ? outer : inner
+                    var x = cx + rad * Math.cos(a), y = cy + rad * Math.sin(a)
+                    if (i === 0) ctx.moveTo(x, y)
+                    else ctx.lineTo(x, y)
+                }
+                ctx.closePath()
+                if (star.on) {
+                    ctx.fillStyle = star.fill
+                    ctx.fill()
+                }
+                ctx.lineWidth = 2
+                ctx.lineJoin = "round"
+                ctx.strokeStyle = star.on ? star.fill : star.line
+                ctx.stroke()
+            }
+        }
+    }
+
     SilicaFlickable {
         anchors.fill: parent
         contentHeight: column.height + Theme.paddingLarge
@@ -142,37 +205,29 @@ Page {
             width: page.width
             spacing: Theme.paddingLarge
 
-            Item {
-                width: parent.width; height: Theme.itemSizeLarge
-                Text {
-                    anchors.centerIn: parent
-                    text: qsTr("load film")
-                    color: FiatLuxTheme.primaryText
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.family: FiatLuxTheme.serif; font.italic: true
-                }
+            PageHead {
+                title: qsTr("load film")
+                subtitle: "fiat lux"
             }
 
             // ---- camera ----
-            CardSection {
-                title: qsTr("into")
-                ChooserRow {
-                    label: page.cameraLabel
-                    onTapped: {
-                        var arr = []
-                        for (var i = 0; i < app.cameraModel.count; i++)
-                            arr.push(app.cameraModel.get(i).name)
-                        cameraMenu.items = arr
-                        cameraMenu.show(anchor)
+            ComboBox {
+                id: cameraCombo
+                width: parent.width
+                label: qsTr("into")
+                enabled: app.cameraModel.count > 0
+                description: app.cameraModel.count === 0
+                             ? qsTr("No cameras yet. Add one from Cameras in the pull-down menu.") : ""
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: app.cameraModel
+                        MenuItem {
+                            text: model.name
+                            color: FiatLuxTheme.primaryText
+                            onClicked: page.chooseCamera(app.cameraModel.get(index))
+                        }
                     }
-                }
-                Text {
-                    visible: app.cameraModel.count === 0
-                    width: parent.width
-                    wrapMode: Text.Wrap
-                    text: qsTr("No cameras yet. Add one from Cameras in the pull-down menu.")
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
                 }
             }
 
@@ -180,31 +235,67 @@ Page {
             CardSection {
                 title: qsTr("film")
 
-                Text {
+                // Chosen: the film, and the way back to the list.
+                Item {
                     visible: page.film !== null
                     width: parent.width
-                    wrapMode: Text.Wrap
-                    text: page.film ? page.film.name + "  ·  ISO " + page.film.boxIso : ""
-                    color: FiatLuxTheme.accent
-                    font.pixelSize: Theme.fontSizeMedium
-                    font.family: FiatLuxTheme.serif; font.italic: true
+                    height: Math.max(chosenName.height, changeBtn.height)
+
+                    Text {
+                        id: chosenName
+                        anchors.left: parent.left
+                        anchors.right: changeBtn.left
+                        anchors.rightMargin: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
+                        wrapMode: Text.Wrap
+                        text: page.film ? page.film.name + "  ·  ISO " + page.film.boxIso : ""
+                        color: FiatLuxTheme.accent
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.family: FiatLuxTheme.serif; font.italic: true
+                    }
+
+                    BackgroundItem {
+                        id: changeBtn
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: changeText.implicitWidth + Theme.paddingLarge * 2
+                        height: Theme.itemSizeExtraSmall
+                        highlightedColor: FiatLuxTheme.highlightWash
+                        onClicked: page.film = null
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: height / 2
+                            color: FiatLuxTheme.pillFill
+                            border.color: FiatLuxTheme.pillBorder
+                            border.width: 1
+                        }
+                        Text {
+                            id: changeText
+                            anchors.centerIn: parent
+                            text: qsTr("change")
+                            color: FiatLuxTheme.primaryText
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
                 }
 
-                SearchField {
-                    id: searchField
-                    width: parent.width + Theme.paddingLarge * 2
-                    x: -Theme.paddingLarge
-                    placeholderText: page.film ? qsTr("change film") : qsTr("search films")
-                    color: FiatLuxTheme.primaryText
-                    onTextChanged: page.query = text
-                }
-
+                // Not chosen yet: search and the list.
                 Column {
+                    visible: page.film === null
                     width: parent.width
                     spacing: 0
 
+                    SearchField {
+                        id: searchField
+                        width: parent.width + Theme.paddingLarge * 2
+                        x: -Theme.paddingLarge
+                        placeholderText: qsTr("search films")
+                        color: FiatLuxTheme.primaryText
+                        onTextChanged: page.query = text
+                    }
+
                     Repeater {
-                        model: page.rows
+                        model: page.film === null ? page.rows : []
                         delegate: Column {
                             width: parent.width
 
@@ -223,7 +314,6 @@ Page {
                                 width: parent.width
                                 height: Theme.itemSizeSmall
                                 highlightedColor: FiatLuxTheme.highlightWash
-                                readonly property bool chosen: page.film !== null && page.film.name === modelData.f.name
                                 onClicked: page.chooseFilm(modelData.f)
 
                                 Text {
@@ -233,7 +323,7 @@ Page {
                                     anchors.verticalCenter: parent.verticalCenter
                                     elide: Text.ElideRight
                                     text: modelData.f.name
-                                    color: filmRow.chosen ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
+                                    color: FiatLuxTheme.primaryText
                                     font.pixelSize: Theme.fontSizeSmall
                                 }
                                 Text {
@@ -246,48 +336,43 @@ Page {
                                     font.pixelSize: Theme.fontSizeExtraSmall
                                 }
 
-                                // Favourite: a filled mark, or an empty ring.
                                 MouseArea {
                                     id: favBtn
                                     anchors.right: parent.right
                                     width: Theme.itemSizeExtraSmall
                                     height: parent.height
                                     onClicked: page.toggleFavourite(modelData.f)
-                                    Rectangle {
+                                    Loader {
                                         anchors.centerIn: parent
-                                        width: Theme.paddingLarge
-                                        height: width
-                                        radius: width / 2
-                                        color: modelData.f.favourite ? FiatLuxTheme.accent : "transparent"
-                                        border.color: modelData.f.favourite ? FiatLuxTheme.accent : FiatLuxTheme.pillBorder
-                                        border.width: 2
+                                        sourceComponent: starMark
+                                        onLoaded: item.on = Qt.binding(function() { return modelData.f.favourite })
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                BackgroundItem {
-                    width: parent.width
-                    height: Theme.itemSizeSmall
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"))
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: qsTr("+ add a film that isn't listed")
-                        color: FiatLuxTheme.accent
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: FiatLuxTheme.serif; font.italic: true
+                    BackgroundItem {
+                        width: parent.width
+                        height: Theme.itemSizeSmall
+                        highlightedColor: FiatLuxTheme.highlightWash
+                        onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"))
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("+ add a film that isn't listed")
+                            color: FiatLuxTheme.accent
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: FiatLuxTheme.serif; font.italic: true
+                        }
                     }
-                }
 
-                Text {
-                    width: parent.width
-                    wrapMode: Text.Wrap
-                    text: qsTr("Tap the ring to keep a film among your favourites.")
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        text: qsTr("Tap the star to keep a film among your favourites.")
+                        color: FiatLuxTheme.secondaryText
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                    }
                 }
             }
 
@@ -349,27 +434,25 @@ Page {
             }
 
             // ---- lens (interchangeable only) ----
-            CardSection {
+            ComboBox {
+                id: lensCombo
                 visible: page.cameraId >= 0 && page.cameraType !== 0
-                title: qsTr("lens")
-                ChooserRow {
-                    label: page.lensLabel
-                    enabled: page.compatLenses.length > 0
-                    onTapped: {
-                        var arr = []
-                        for (var i = 0; i < page.compatLenses.length; i++)
-                            arr.push(page.compatLenses[i].name)
-                        lensMenu.items = arr
-                        lensMenu.show(anchor)
+                width: parent.width
+                label: qsTr("lens")
+                enabled: page.compatLenses.length > 0
+                description: page.compatLenses.length === 0
+                             ? qsTr("No lenses with the mount “%1” yet. You can load the film now and add lenses later.").arg(page.cameraMount)
+                             : ""
+                menu: ContextMenu {
+                    highlightColor: FiatLuxTheme.accent
+                    Repeater {
+                        model: page.compatLenses
+                        MenuItem {
+                            text: modelData.name
+                            color: FiatLuxTheme.primaryText
+                            onClicked: page.lensId = modelData.id
+                        }
                     }
-                }
-                Text {
-                    visible: page.compatLenses.length === 0
-                    width: parent.width
-                    wrapMode: Text.Wrap
-                    text: qsTr("No lenses with the mount “%1” yet. You can load the film now and add lenses later.").arg(page.cameraMount)
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
                 }
             }
 
@@ -396,18 +479,7 @@ Page {
 
             Item { width: 1; height: Theme.paddingLarge }
         }
-    }
 
-    PillMenu {
-        id: cameraMenu
-        onPicked: function(idx) { page.chooseCamera(app.cameraModel.get(idx)) }
-    }
-
-    PillMenu {
-        id: lensMenu
-        onPicked: function(idx) {
-            page.lensId = page.compatLenses[idx].id
-            page.lensLabel = page.compatLenses[idx].name
-        }
+        VerticalScrollDecorator { }
     }
 }
