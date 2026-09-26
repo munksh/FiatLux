@@ -6,7 +6,15 @@ import ".." 1.0
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
-    background: Rectangle { color: FiatLuxTheme.deepBg }
+    Rectangle {
+        anchors.fill: parent
+        z: -1
+        visible: !FiatLuxTheme.ambient
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
+            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
+        }
+    }
 
     // If editId >= 0 we're editing; else adding
     property int editId: -1

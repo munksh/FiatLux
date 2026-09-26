@@ -7,7 +7,15 @@ import "../components"
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
-    background: Rectangle { color: FiatLuxTheme.deepBg }
+    Rectangle {
+        anchors.fill: parent
+        z: -1
+        visible: !FiatLuxTheme.ambient
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
+            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
+        }
+    }
 
     property int activeItemId: -1
 

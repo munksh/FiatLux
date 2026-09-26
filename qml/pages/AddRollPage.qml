@@ -7,7 +7,15 @@ Page {
     id: page
     allowedOrientations: Orientation.Portrait
 
-    background: Rectangle { color: FiatLuxTheme.deepBg }
+    Rectangle {
+        anchors.fill: parent
+        z: -1
+        visible: !FiatLuxTheme.ambient
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
+            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
+        }
+    }
 
     property int editId: -1
     // Set true when pushed from MeterPage pull-down so Save returns to meter
@@ -168,7 +176,7 @@ Page {
                     Text {
                         anchors.centerIn: parent
                         text: editId >= 0 ? "save changes" : "load roll"
-                        color: FiatLuxTheme.deepBg
+                        color: FiatLuxTheme.onAccent
                         font.pixelSize: Theme.fontSizeMedium
                         font.family: FiatLuxTheme.serif; font.italic: true; font.bold: true
                     }

@@ -35,3 +35,4 @@ desktop-file-install --delete-original --dir %{buildroot}%{_datadir}/application
 %{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 %license %{_datadir}/licenses/%{name}/LICENSE
+%license %{_datadir}/licenses/%{name}/LICENSE.RAWfish

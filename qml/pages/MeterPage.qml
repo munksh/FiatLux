@@ -1,7 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
-import QtMultimedia 5.0
-import QtSensors 5.2
+import se.munkstolen.fiatlux 1.0
 import Nemo.Configuration 1.0
 import "../Storage.js" as Storage
 import ".." 1.0
@@ -32,10 +31,9 @@ Page {
     // Fallback only. picturesPath() asks the platform first.
     property string picturesDir: "/home/defaultuser/Pictures"
 
-    // Sensor rotation for the viewfinder. Try 0 / 90 / 180 / 270 / -90.
-    property int viewfinderOrientation: 0
+    // Rotation of the Camera2 frames on screen. Try 0 / 90 / 180 / 270.
+    property int viewfinderOrientation: 90
 
-    property real lastLux: -1
     property string meterNote: ""
 
     // Where the scroller lands after a measurement \u2014 handheld default 1/125 s.
@@ -46,18 +44,19 @@ Page {
 
     // ---- calibration -----------------------------------------------------
     //
-    // In stops, and it lives in dconf so the calibrate page and the meter are
-    // looking at the same number and neither owns it. The guard matters: a
-    // dconf value reads back undefined before the key exists, and undefined
-    // arithmetic gives NaN, which would silently make every reading vanish.
+    // In stops, in dconf, so the calibrate page and the meter read the same
+    // number. A new key: the old evCalibration belonged to the light sensor
+    // and means nothing for the camera. The guard matters -- a dconf value
+    // reads back undefined before the key exists, and undefined arithmetic
+    // gives NaN, which would make every reading vanish.
     ConfigurationValue {
         id: cfgCalibration
-        key: "/apps/harbour-fiatlux/evCalibration"
-        defaultValue: -3.0
+        key: "/apps/harbour-fiatlux/evCalibrationReflected"
+        defaultValue: 4.0
     }
     readonly property real evCalibration: {
         var v = cfgCalibration.value
-        if (v === undefined || v === null) return -3.0
+        if (v === undefined || v === null) return 4.0
         return v
     }
 
@@ -73,8 +72,14 @@ Page {
         // Nothing has been metered, so there is nothing to show. Publishing
         // the default 8.0 would put a number on the cover that no one chose.
         if (!page.evLocked) return
-        cfgAperture.value = page.currentApertureText
-        cfgSpeed.value = page.currentSpeedText
+        var a = page.apertures
+        var s = page.shutterSpeeds
+        var i = exposureList.currentIndex
+        if (!a || !s || i < 0 || i >= a.length) return
+        var k = page.speedIndexFor(parseFloat(a[i]), page.ev, page.iso, s)
+        if (k < 0 || k >= s.length) return
+        cfgAperture.value = a[i]
+        cfgSpeed.value = s[k]
         cfgCamera.value = page.sourceLabel
         cfgIso.value = page.iso
         cfgFilm.value = page.rollId >= 0 ? page.sourceLabel : ""
@@ -256,30 +261,33 @@ Page {
 
     // ---- measuring --------------------------------------------------------
     //
-    // Incident, from the ambient light sensor beside the earpiece. It measures
-    // the light FALLING ON the phone, so it is held at the subject with the
-    // screen towards the camera, the way you would hold a Sekonic with the
-    // dome on -- not aimed at the subject like a camera.
+    // Reflected, through the lens: the ISO and exposure time the camera's
+    // auto-exposure chose for the current frame, and the lens's fixed aperture.
     //
-    //   EV100 = log2(lux / C), C = 250 for a flat receptor, so log2(lux / 2.5)
+    //   EV100 = log2(N^2 / t) - log2(S / 100)
+    //
+    // Like any reflected meter it takes what it sees for mid-grey, so snow
+    // reads dark and a black cat reads bright. Tap the viewfinder to meter a
+    // spot rather than the whole frame.
 
-    function measureIncident() {
-        var lux = page.lastLux
-        if (lux === undefined || !(lux > 0)) return NaN
-        // NaN and not 0 for "nothing to say": zero is a real exposure value,
-        // one second at f/1 on ISO 100, and using it as a sentinel would
-        // silently meter a moonlit room.
-        return Math.log(lux / 2.5) / Math.LN2
+    function formatSeconds(t) {
+        if (!(t > 0)) return "-"
+        if (t < 1) return "1/" + Math.round(1 / t)
+        return t.toFixed(1) + "\""
     }
 
     function measure() {
-        var v = page.measureIncident()
-        if (isNaN(v)) {
-            page.meterNote = qsTr("no light sensor reading yet")
+        if (!meter.metered) {
+            page.meterNote = meter.errorString !== ""
+                    ? meter.errorString
+                    : qsTr("no reading from the camera yet")
             return
         }
-        page.meterNote = qsTr("incident � %1 lx").arg(Math.round(page.lastLux))
-        page.ev = v + page.evCalibration
+        page.meterNote = qsTr("reflected \u00b7 f/%1 \u00b7 %2 \u00b7 ISO %3")
+                .arg(meter.aperture.toFixed(2))
+                .arg(page.formatSeconds(meter.exposureTime))
+                .arg(meter.iso)
+        page.ev = meter.ev100 + page.evCalibration
         page.evLocked = true
         exposureList.currentIndex = page.suggestIndex()
         page.publishReading()
@@ -372,82 +380,30 @@ Page {
     readonly property bool cameraWanted:
         page.pageState === PageStatus.Active && page.appState === Qt.ApplicationActive
 
-    readonly property bool cameraLive: camera.cameraStatus === Camera.ActiveStatus
+    readonly property bool cameraLive: meter.running && meter.hasFrame
 
     property string cameraNote: ""
 
     // ---- the camera -------------------------------------------------------
     //
-    // Declared STATICALLY, and so is the VideoOutput below. That is not a
-    // style preference, it is the fix.
-    //
-    // This lived in a Loader that destroyed and rebuilt the Camera object. The
-    // log said exactly what that cost:
-    //
-    //     [W] Starting camera without viewfinder available
-    //     invalid handle: (nil)
-    //
-    // A Camera created inside a Loader carries cameraState: ActiveState in its
-    // own declaration, so gst-droid starts the pipeline the instant the object
-    // exists -- before VideoOutput.source has been rebound to it. gst-droid
-    // builds a pipeline with no viewfinder branch, returns null graphic
-    // buffers, and leaves the device in a state the next open inherits. The
-    // Loader was meant to recover from a stolen camera; it broke the camera
-    // instead, and permanently.
-    //
-    // Static object, static viewfinder, and only cameraState moves. The state
-    // cannot reach Active before the VideoOutput exists to receive it, because
-    // the VideoOutput was built before the page finished loading.
-    Camera {
-        id: camera
-        captureMode: Camera.CaptureStillImage
-        cameraState: page.cameraWanted ? Camera.ActiveState : Camera.UnloadedState
-
-        onCameraStatusChanged: {
-            if (cameraStatus === Camera.ActiveStatus) {
-                page.cameraNote = ""
-                page.applyFocus()
-            }
-        }
-
-        onError: {
-            console.log("camera error:", errorCode, errorString)
-            page.cameraNote = errorString
-        }
-    }
-
-    // Manual recovery: unload, wait, and hand the binding back. No object is
-    // destroyed, so there is never a moment where the viewfinder is missing.
-    Timer {
-        id: cameraKick
-        interval: 400
-        onTriggered: camera.cameraState = Qt.binding(function() {
-            return page.cameraWanted ? Camera.ActiveState : Camera.UnloadedState
-        })
-    }
+    // Camera2, through RAWfish's helper, /usr/libexec/rawfish/sfos-camera2-probe.
+    // It streams the preview frames and, whenever auto-exposure changes its
+    // mind, the ISO and exposure time it chose. Camera2Meter, in the
+    // viewfinder below, is both the picture and the meter. Only one process
+    // can hold the camera, so it stops whenever this page is not in front.
 
     function reloadCamera() {
         page.cameraNote = ""
-        camera.cameraState = Camera.UnloadedState
-        cameraKick.restart()
+        meter.restart()
     }
 
-    // Only for the placeholder. A viewfinder that says "waking the camera"
-    // forever is a lie; one that names the state it is in is a bug report you
-    // can read without a laptop.
+    // Only for the placeholder: a viewfinder that names its state is a bug
+    // report you can read without a laptop.
     function cameraStatusName() {
-        switch (camera.cameraStatus) {
-        case Camera.UnavailableStatus: return "unavailable"
-        case Camera.UnloadedStatus:    return "unloaded"
-        case Camera.LoadingStatus:     return "loading"
-        case Camera.UnloadingStatus:   return "unloading"
-        case Camera.LoadedStatus:      return "loaded"
-        case Camera.StandbyStatus:     return "standby"
-        case Camera.StartingStatus:    return "starting"
-        case Camera.StoppingStatus:    return "stopping"
-        case Camera.ActiveStatus:      return "active"
-        default:                       return "unknown"
-        }
+        if (!meter.available) return "no Camera2 helper"
+        if (!meter.running) return "stopped"
+        if (!meter.hasFrame) return "starting"
+        return "live"
     }
 
     function appStateName() {
@@ -468,62 +424,6 @@ Page {
         case PageStatus.Deactivating: return "deactivating"
         default:                      return "?" + page.pageState
         }
-    }
-
-    // ---- focus -------------------------------------------------------------
-    //
-    // Focus has to be requested AFTER the camera reaches ActiveStatus, not in
-    // the declaration -- before that there is no device to ask and the
-    // assignment is quietly dropped. Every call is guarded, because which modes
-    // exist is a property of the hardware and not of QtMultimedia.
-
-    function applyFocus() {
-        if (!page.cameraLive) return
-        try {
-            if (camera.focus.isFocusModeSupported(Camera.FocusContinuous)) {
-                camera.focus.focusMode = Camera.FocusContinuous
-            } else if (camera.focus.isFocusModeSupported(Camera.FocusAuto)) {
-                camera.focus.focusMode = Camera.FocusAuto
-                camera.searchAndLock()
-            }
-        } catch (e) {
-            console.log("focus mode:", e)
-        }
-        try {
-            if (camera.focus.isFocusPointModeSupported(Camera.FocusPointAuto)) {
-                camera.focus.focusPointMode = Camera.FocusPointAuto
-            }
-        } catch (e2) {
-            console.log("focus point:", e2)
-        }
-    }
-
-    function refocus() {
-        if (!page.cameraLive) return
-        try {
-            camera.unlock()
-            if (camera.focus.isFocusModeSupported(Camera.FocusAuto)) {
-                camera.focus.focusMode = Camera.FocusAuto
-            }
-            camera.searchAndLock()
-        } catch (e) {
-            console.log("refocus:", e)
-        }
-    }
-
-    // ---- the light sensor --------------------------------------------------
-    //
-    // `active` follows the polled app state, and THE TOGGLE IS THE POINT.
-    //
-    // It was `active: true` -- a constant, set once at load and never asked
-    // again. sensorfw drops the session when the device suspends, which is
-    // exactly what happens the moment the USB cable comes out and the phone is
-    // finally allowed to sleep. Nothing then re-requests it, so metering stops
-    // for good. A value that goes false and back to true asks again.
-    LightSensor {
-        id: lightSensor
-        active: page.appState === Qt.ApplicationActive
-        onReadingChanged: page.lastLux = reading.illuminance
     }
 
     PaperBackground { }
@@ -672,30 +572,42 @@ Page {
                 color: FiatLuxTheme.viewfinderBg
                 clip: true
 
-                // source is the static camera id, bound at load. gst-droid must
-                // never start a pipeline before this exists.
-                VideoOutput {
-                    id: vo
-                    source: camera
-                    anchors.centerIn: parent
-                    // Manual "crop to fill": overfill the square, parent clips.
-                    property real ar: sourceRect.height > 0
-                                      ? sourceRect.width / sourceRect.height
-                                      : 1
-                    width:  ar >= 1 ? parent.height * ar : parent.width
-                    height: ar >= 1 ? parent.height : parent.width / ar
-                    fillMode: VideoOutput.PreserveAspectFit
+                Camera2Meter {
+                    id: meter
+                    anchors.fill: parent
+                    fill: true
                     orientation: page.viewfinderOrientation
-                    visible: page.cameraLive
+                    active: page.status === PageStatus.Active
+                            && page.appState === Qt.ApplicationActive
+                    onErrorStringChanged: page.cameraNote = errorString
                 }
 
-                // Live: refocus. Black: unload and start again.
+                Rectangle {
+                    id: spotMark
+                    visible: meter.spot && page.cameraLive
+                    width: Theme.itemSizeSmall
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.color: FiatLuxTheme.viewfinderText
+                    border.width: 2
+                    opacity: 0.8
+                }
+
+                // Tap: meter that spot. Press and hold: the whole frame again.
+                // While the camera is down, a tap starts it.
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        if (page.cameraLive) page.refocus()
-                        else page.reloadCamera()
+                        if (!page.cameraLive) {
+                            page.reloadCamera()
+                            return
+                        }
+                        spotMark.x = mouse.x - spotMark.width / 2
+                        spotMark.y = mouse.y - spotMark.height / 2
+                        meter.meterAt(mouse.x / width, mouse.y / height)
                     }
+                    onPressAndHold: meter.meterWholeFrame()
                 }
 
                 Column {
@@ -961,10 +873,6 @@ Page {
             }
 
             // ---- what this meter is ----
-            //
-            // Said here, at the moment of use, and not in an about page. An
-            // incident meter used like a reflected one gives a confident wrong
-            // answer, which is the worst kind.
             Column {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
@@ -972,7 +880,7 @@ Page {
 
                 Label {
                     width: parent.width
-                    text: qsTr("incident � point the screen at the camera")
+                    text: meter.spot ? qsTr("reflected \u00b7 spot") : qsTr("reflected \u00b7 whole frame")
                     font.pixelSize: Theme.fontSizeExtraSmall
                     font.bold: true
                     color: FiatLuxTheme.accent
@@ -981,7 +889,7 @@ Page {
                 Label {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: qsTr("Measured from the subject, not from the camera. Calibrated for daylight \u2014 under a lamp it reads bright.")
+                    text: qsTr("Metered through the camera, like a reflected meter. Tap the viewfinder to meter a spot; press and hold to go back to the whole frame.")
                     font.pixelSize: Theme.fontSizeExtraSmall
                     color: FiatLuxTheme.secondaryText
                 }
