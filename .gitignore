@@ -24,6 +24,8 @@ ui_*.h
 
 # Built application
 /harbour-fiatlux
+/camera2-helper
+camera2/prebuilt/*.part
 
 # Sailfish SDK and packaging output
 .sfdk/

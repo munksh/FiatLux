@@ -165,7 +165,16 @@ Page {
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeExtraSmall
                 color: FiatLuxTheme.secondaryText
-                text: qsTr("Fiat Lux meters through the camera with RAWfish's Camera2 helper, so RAWfish has to be installed. It has only been tested on the Jolla Phone (2026), where it reads 4 stops low out of the box; Calibrate starts at +4 to correct that. On any other phone, check it against a meter you trust before you trust it with film.")
+                text: qsTr("Fiat Lux meters through the phone's own camera, with a Camera2 helper it carries with it; nothing else needs to be installed. It has only been tested on the Jolla Phone (2026), where the camera reads 4 stops low out of the box; Calibrate starts at +4 to correct that. On any other phone, check it against a meter you trust before you trust it with film.")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeExtraSmall
+                color: FiatLuxTheme.secondaryText
+                text: qsTr("The viewfinder is small on purpose: 640 \u00d7 480, enough to aim, to meter and to remember the scene and the settings, and light enough to keep the phone cool and the meter quick. Log shot asks the camera for a proper photo.")
             }
 
             BackgroundItem {
@@ -179,6 +188,51 @@ Page {
                     text: qsTr("Show the introduction again")
                     font.pixelSize: Theme.fontSizeSmall
                     color: FiatLuxTheme.accent
+                }
+            }
+
+            // -- Built on ----------------------------------------------------
+
+            SectionLabel {
+                x: Theme.horizontalPageMargin
+                text: qsTr("Built on")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSizeExtraSmall
+                color: FiatLuxTheme.secondaryText
+                text: qsTr("The camera side of Fiat Lux is RAWfish by Logic-gate. Its Camera2 helper and bridge are what let Lux read the exposure the camera chooses, and take the photo when you log a shot. RAWfish grew out of Jolla's own Camera app. Lux carries its own copy, so RAWfish does not need to be installed \u2014 but do have a look at it.")
+            }
+
+            BackgroundItem {
+                width: parent.width
+                height: Theme.itemSizeSmall
+                highlightedColor: FiatLuxTheme.highlightWash
+                onClicked: Qt.openUrlExternally("https://github.com/Logic-gate/RAWfish")
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: Theme.horizontalPageMargin
+                    width: parent.width - Theme.horizontalPageMargin * 2
+
+                    Label {
+                        width: parent.width
+                        truncationMode: TruncationMode.Fade
+                        color: FiatLuxTheme.accent
+                        font.pixelSize: Theme.fontSizeSmall
+                        text: "github.com/Logic-gate/RAWfish"
+                    }
+
+                    Label {
+                        width: parent.width
+                        truncationMode: TruncationMode.Fade
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                        color: FiatLuxTheme.secondaryText
+                        text: qsTr("BSD 3-Clause \u00b7 Jolla Ltd. and the RAWfish contributors")
+                    }
                 }
             }
 

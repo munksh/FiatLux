@@ -12,7 +12,7 @@ Page {
     id: page
     allowedOrientations: Orientation.Portrait
 
-    property int version: 1
+    property int version: 2
 
     ConfigurationValue {
         id: cfgIntro
@@ -32,27 +32,19 @@ Page {
         onAmbientChanged: page.paint()
     }
 
-    Rectangle {
-        anchors.fill: parent
-        z: -1
-        visible: !FiatLuxTheme.ambient
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
-            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
-        }
-    }
+    PaperBackground { }
 
     readonly property var steps: [
         { title: qsTr("point"),
           text: qsTr("Point the phone at what you are photographing and press measure. Lux reads it the way a reflected meter does: whatever it sees, it takes for mid-grey. Tap the viewfinder to meter one spot; press and hold to go back to the whole frame.") },
         { title: qsTr("choose"),
-          text: qsTr("Every pair in the row gives the same exposure. Swipe to the aperture you want. The cover shows the pair you chose.") },
+          text: qsTr("The dial pairs each aperture with the speeds your camera really has. Drag it to the aperture you want; the nearest speed is picked, and the line under the dial says how far off it is. Tap another speed to go over or under on purpose. The cover shows the pair you chose.") },
         { title: qsTr("your cameras"),
-          text: qsTr("Add your cameras from Cameras in the pull-down menu, with the speeds and apertures they really have. Lux then only suggests settings you can set.") },
+          text: qsTr("Add your cameras from Cameras in the pull-down menu, with the speeds and apertures they really have. Lux then only suggests settings you can set. Switch camera from the line under the dial.") },
         { title: qsTr("load film"),
           text: qsTr("Load a film into a camera and choose the speed you shoot it at. That speed then stays with the camera until the next film. Quick Meter is for everything else, with any ISO you like.") },
         { title: qsTr("log shot"),
-          text: qsTr("Log shot keeps the frame with its settings burnt in, and counts it. Measuring never uses up a frame.") }
+          text: qsTr("Log shot takes a photo with the settings burnt in, keeps it in Pictures/FiatLux, and counts the frame. Measuring never uses up a frame.") }
     ]
 
     SilicaFlickable {
@@ -74,23 +66,16 @@ Page {
                     subtitle: "fiat lux"
                 }
 
-                BackgroundItem {
+                LinkText {
                     id: skip
                     anchors.left: parent.left
+                    anchors.leftMargin: Theme.horizontalPageMargin - Theme.paddingSmall
                     y: Math.max(0, FiatLuxTheme.statusRowCenter - height / 2)
-                    width: skipText.implicitWidth + Theme.horizontalPageMargin * 2
-                    height: Theme.itemSizeSmall
-                    highlightedColor: FiatLuxTheme.highlightWash
+                    text: qsTr("skip")
+                    underline: false
+                    italic: true
+                    fontSize: Theme.fontSizeMedium
                     onClicked: page.done()
-                    Text {
-                        id: skipText
-                        anchors.centerIn: parent
-                        text: qsTr("skip")
-                        color: FiatLuxTheme.accent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif
-                        font.italic: true
-                    }
                 }
             }
 
@@ -148,30 +133,12 @@ Page {
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeExtraSmall
                 color: FiatLuxTheme.secondaryText
-                text: qsTr("Lux meters through the camera with RAWfish's Camera2 helper, so RAWfish has to be installed. It has only been tested on the Jolla Phone (2026). If it disagrees with a meter you trust, set the difference under Calibrate.")
+                text: qsTr("Lux meters through the phone's own camera; nothing else needs to be installed. It has only been tested on the Jolla Phone (2026). If it disagrees with a meter you trust, set the difference under Calibrate.")
             }
 
-            BackgroundItem {
-                id: startBtn
-                width: parent.width
-                height: Theme.itemSizeLarge
+            FiatButton {
+                text: qsTr("start metering")
                 onClicked: page.done()
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium
-                    radius: Theme.paddingLarge
-                    color: startBtn.highlighted ? Qt.darker(FiatLuxTheme.accent, 1.2) : FiatLuxTheme.accent
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("start metering")
-                        color: FiatLuxTheme.onAccent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif
-                        font.italic: true
-                        font.bold: true
-                    }
-                }
             }
 
             Item { width: 1; height: Theme.paddingLarge }

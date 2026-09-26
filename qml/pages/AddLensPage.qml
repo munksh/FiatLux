@@ -1,80 +1,78 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
 import "../Storage.js" as Storage
+import "../Gear.js" as Gear
 import ".." 1.0
 import "../components"
+
+// A lens for a camera whose lens comes off. It finds its cameras by mount.
+// Speeds only when the shutter is in the lens (a leaf shutter: Hasselblad V,
+// Mamiya RB67, large format); an SLR lens leaves them to the body.
 
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
 
-    Rectangle {
-        anchors.fill: parent
-        z: -1
-        visible: !FiatLuxTheme.ambient
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
-            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
-        }
-    }
-
     property int editId: -1
-    // Optional: pre-fill mount when launched from a camera context
+    // Optional: the mount, when opened from a camera.
     property string presetMount: ""
 
-    property var allApertures: ["1","1.4","1.7","2","2.8","4","5.6","8","11","16","22"]
-    property var allSpeeds: ["1/1000","1/500","1/300","1/250","1/125","1/100","1/60","1/50","1/30","1/15","1/8","1/4","1/2","1\"","B"]
-    property var selApertures: []
-    property var selSpeeds: []
-    property var knownMounts: []
-    property int gen: 0
+    property string mount: ""
+    property var apertures: []
+    property var speeds: []
 
-    property bool canSave: lensName.text.length > 0 && mountField.text.length > 0 && selApertures.length > 0
+    readonly property bool canSave: lensName.text.trim().length > 0 && mount.length > 0 && apertures.length > 0
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
 
     Component.onCompleted: {
-        knownMounts = Storage.mounts()
-        if (presetMount.length > 0) mountField.text = presetMount
+        paint()
+        if (presetMount.length > 0) mount = presetMount
         if (editId >= 0) {
             var l = Storage.getLens(editId)
             if (l) {
                 lensName.text = l.name
-                mountField.text = l.mount
-                selApertures = (l.apertures && l.apertures.length > 0) ? l.apertures.split(",") : []
-                selSpeeds = (l.speeds && l.speeds.length > 0) ? l.speeds.split(",") : []
-                gen++
+                mount = l.mount || ""
+                apertures = Gear.sortApertures(Gear.splitList(l.apertures))
+                speeds = Gear.speedsForStorage(Gear.splitList(l.speeds))
             }
         }
     }
 
-    function apSelected(a) { return selApertures.indexOf(a) !== -1 }
-    function spSelected(s) { return selSpeeds.indexOf(s) !== -1 }
-
-    Component {
-        id: pillComponent
-        Rectangle {
-            property bool selected: false
-            property string label: ""
-            property var onToggle
-            width: pillLabel.implicitWidth + Theme.paddingLarge * 2
-            height: pillLabel.implicitHeight + Theme.paddingMedium
-            radius: height / 2
-            color: selected ? FiatLuxTheme.amberMed : FiatLuxTheme.deepBg
-            border.color: selected ? FiatLuxTheme.amber : FiatLuxTheme.rim
-            border.width: selected ? 2 : 1
-            Text {
-                id: pillLabel; anchors.centerIn: parent; text: parent.label
-                color: parent.selected ? FiatLuxTheme.amber : FiatLuxTheme.primaryText
-                font.pixelSize: Theme.fontSizeSmall
-            }
-            MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                    parent.selected = !parent.selected
-                    if (parent.onToggle) parent.onToggle(parent.selected)
-                }
-            }
-        }
+    function editMount() {
+        var p = pageStack.push(Qt.resolvedUrl("MountPage.qml"), { current: page.mount })
+        p.picked.connect(function(m) { page.mount = m })
     }
+
+    function editApertures() {
+        var d = pageStack.push(Qt.resolvedUrl("PlateDialog.qml"),
+                               { kind: "apertures", selected: page.apertures, owner: lensName.text })
+        d.accepted.connect(function() { page.apertures = d.selected })
+    }
+
+    function editSpeeds() {
+        var d = pageStack.push(Qt.resolvedUrl("PlateDialog.qml"),
+                               { kind: "speeds", selected: page.speeds, owner: lensName.text, allowEmpty: true })
+        d.accepted.connect(function() { page.speeds = d.selected })
+    }
+
+    function save() {
+        var name = lensName.text.trim()
+        var a = Gear.sortApertures(page.apertures).join(",")
+        var s = Gear.speedsForStorage(page.speeds).join(",")
+        if (page.editId >= 0)
+            Storage.updateLens(page.editId, name, page.mount, a, s)
+        else
+            Storage.addLens(name, page.mount, a, s)
+        app.reloadLenses()
+        pageStack.pop()
+    }
+
+    PaperBackground { }
 
     SilicaFlickable {
         anchors.fill: parent
@@ -83,134 +81,59 @@ Page {
         Column {
             id: column
             width: page.width
-            spacing: Theme.paddingLarge
 
             PageHead {
-                title: editId >= 0 ? "edit lens" : "add lens"
+                title: page.editId >= 0 ? qsTr("edit lens") : qsTr("add lens")
                 subtitle: "fiat lux"
             }
 
-            CardSection {
-                title: "lens"
-                TextField {
-                    id: lensName
-                    width: parent.width
-                    placeholderText: "e.g. SMC Pentax 50mm f/1.7"
-                    label: "Lens name"
-                    color: FiatLuxTheme.primaryText
-                }
-                TextField {
-                    id: mountField
-                    width: parent.width
-                    placeholderText: "e.g. M42, K-mount"
-                    label: "Mount"
-                    color: FiatLuxTheme.primaryText
-                }
-                Flow {
-                    visible: knownMounts.length > 0
-                    width: parent.width; spacing: Theme.paddingSmall
-                    Repeater {
-                        model: knownMounts
-                        delegate: BackgroundItem {
-                            width: mtag.width + Theme.paddingMedium * 2
-                            height: mtag.height + Theme.paddingSmall * 1.5
-                            onClicked: mountField.text = modelData
-                            Rectangle {
-                                anchors.fill: parent; radius: height / 2
-                                color: "transparent"
-                                border.color: FiatLuxTheme.rim; border.width: 1
-                            }
-                            Text {
-                                id: mtag; anchors.centerIn: parent; text: modelData
-                                color: FiatLuxTheme.secondaryText
-                                font.pixelSize: Theme.fontSizeExtraSmall
-                            }
-                        }
-                    }
-                }
+            TextField {
+                id: lensName
+                width: parent.width
+                label: qsTr("Lens name")
+                placeholderText: qsTr("e.g. SMC Pentax-M 50mm f/1.7")
+                color: FiatLuxTheme.primaryText
+                EnterKey.iconSource: "image://theme/icon-m-enter-close"
+                EnterKey.onClicked: focus = false
             }
 
-            CardSection {
-                title: "apertures"
-                Flow {
-                    width: parent.width; spacing: Theme.paddingSmall
-                    Repeater {
-                        model: (gen, allApertures.slice())
-                        delegate: Loader {
-                            sourceComponent: pillComponent
-                            onLoaded: {
-                                item.label = "f/" + modelData
-                                item.selected = apSelected(modelData)
-                                item.onToggle = function(sel) {
-                                    if (sel) selApertures.push(modelData)
-                                    else selApertures = selApertures.filter(function(a){ return a !== modelData })
-                                }
-                            }
-                        }
-                    }
-                }
+            ValueButton {
+                width: parent.width
+                label: qsTr("mount")
+                value: page.mount !== "" ? page.mount : qsTr("choose")
+                description: qsTr("The same mount as the camera it fits.")
+                onClicked: page.editMount()
             }
 
-            // Speeds — only relevant for fixed/leaf lenses. For SLR lenses the
-            // body supplies speeds, so this section is optional. We always show
-            // it; leave empty for an SLR lens.
-            CardSection {
-                title: "shutter speeds (leaf / fixed lenses only)"
-                Text {
-                    width: parent.width
-                    text: "Leave empty for SLR / rangefinder lenses — the body provides speeds."
-                    color: FiatLuxTheme.secondaryText
-                    font.pixelSize: Theme.fontSizeExtraSmall
-                    wrapMode: Text.Wrap
-                }
-                Flow {
-                    width: parent.width; spacing: Theme.paddingSmall
-                    Repeater {
-                        model: (gen, allSpeeds.slice())
-                        delegate: Loader {
-                            sourceComponent: pillComponent
-                            onLoaded: {
-                                item.label = modelData
-                                item.selected = spSelected(modelData)
-                                item.onToggle = function(sel) {
-                                    if (sel) selSpeeds.push(modelData)
-                                    else selSpeeds = selSpeeds.filter(function(s){ return s !== modelData })
-                                }
-                            }
-                        }
-                    }
-                }
+            ValueButton {
+                width: parent.width
+                label: qsTr("apertures")
+                value: page.apertures.length > 0 ? Gear.apertureSummary(page.apertures) : qsTr("choose")
+                description: page.apertures.length > 0 ? Gear.apertureCount(page.apertures) : ""
+                onClicked: page.editApertures()
             }
 
-            BackgroundItem {
-                id: saveBtn
-                width: parent.width; height: Theme.itemSizeLarge
+            ValueButton {
+                width: parent.width
+                label: qsTr("shutter speeds")
+                value: page.speeds.length > 0 ? Gear.speedSummary(page.speeds) : qsTr("none")
+                description: page.speeds.length > 0
+                             ? Gear.speedCount(page.speeds)
+                             : qsTr("Only for a lens with its own shutter. An SLR lens leaves them to the body.")
+                onClicked: page.editSpeeds()
+            }
+
+            Item { width: 1; height: Theme.paddingLarge }
+
+            FiatButton {
+                text: page.editId >= 0 ? qsTr("save changes") : qsTr("save lens")
                 enabled: page.canSave
-                opacity: enabled ? 1.0 : 0.35
-                onClicked: {
-                    if (editId >= 0)
-                        Storage.updateLens(editId, lensName.text, mountField.text, selApertures.join(","), selSpeeds.join(","))
-                    else
-                        Storage.addLens(lensName.text, mountField.text, selApertures.join(","), selSpeeds.join(","))
-                    app.reloadLenses()
-                    pageStack.pop()
-                }
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium; radius: Theme.paddingLarge
-                    color: saveBtn.highlighted ? FiatLuxTheme.amberStrong : FiatLuxTheme.amber
-                    Text {
-                        anchors.centerIn: parent
-                        text: editId >= 0 ? "save changes" : "save lens"
-                        color: FiatLuxTheme.onAccent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif; font.italic: true; font.bold: true
-                    }
-                }
+                onClicked: page.save()
             }
 
             Item { width: 1; height: Theme.paddingLarge }
         }
+
+        VerticalScrollDecorator { }
     }
 }

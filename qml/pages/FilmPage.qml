@@ -4,61 +4,62 @@ import "../Storage.js" as Storage
 import ".." 1.0
 import "../components"
 
+// The films you have added or loaded, one plain row each, box speed to the
+// right.
+
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
-    Rectangle {
-        anchors.fill: parent
-        z: -1
-        visible: !FiatLuxTheme.ambient
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
-            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
-        }
+
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Component.onCompleted: paint()
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
     }
 
-    property int activeItemId: -1
+    PaperBackground { }
 
     SilicaListView {
         anchors.fill: parent
         model: app.stockModel
-        spacing: Theme.paddingMedium
 
         PullDownMenu {
-            backgroundColor: FiatLuxTheme.surface
-            highlightColor: FiatLuxTheme.amber
+            highlightColor: FiatLuxTheme.accent
             MenuItem {
-                text: "Load film"; color: FiatLuxTheme.primaryText
+                text: qsTr("Load film"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("AddRollPage.qml"))
             }
             MenuItem {
-                text: "Lenses"; color: FiatLuxTheme.primaryText
+                text: qsTr("Lenses"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("LensesPage.qml"))
             }
             MenuItem {
-                text: "Cameras"; color: FiatLuxTheme.primaryText
+                text: qsTr("Cameras"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("CamerasPage.qml"))
             }
             MenuItem {
-                text: "Add film stock"; color: FiatLuxTheme.primaryText
+                text: qsTr("Add film"); color: FiatLuxTheme.primaryText
                 onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"))
             }
         }
 
         header: PageHead {
-            title: "film stocks"
+            title: qsTr("film stocks")
             subtitle: "fiat lux"
         }
 
         ViewPlaceholder {
             enabled: app.stockModel.count === 0
-            text: "Pull down to add a film stock"
+            text: qsTr("No films yet")
+            hintText: qsTr("Films you load appear here. Pull down to add one by hand.")
         }
 
         delegate: ListItem {
             id: item
             width: ListView.view.width
-            contentHeight: card.height + Theme.paddingSmall * 2
+            contentHeight: Theme.itemSizeMedium
+            highlightedColor: FiatLuxTheme.highlightWash
             readonly property int itemId: model.id
             onClicked: openMenu()
 
@@ -82,49 +83,30 @@ Page {
                 }
             }
 
-            Rectangle {
-                id: card
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
+            Label {
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.horizontalPageMargin
+                anchors.right: isoLabel.left
+                anchors.rightMargin: Theme.paddingLarge
                 anchors.verticalCenter: parent.verticalCenter
-                height: row.height + Theme.paddingLarge * 2
-                radius: Theme.paddingLarge * 1.5
-                color: item.highlighted ? FiatLuxTheme.surface : FiatLuxTheme.deepBg
-                border.color: item.highlighted ? FiatLuxTheme.amber : FiatLuxTheme.rim
-                border.width: item.highlighted ? 2 : 1
-
-                Row {
-                    id: row
-                    x: Theme.paddingLarge
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 2 * Theme.paddingLarge
-
-                    Text {
-                        text: model.name
-                        color: FiatLuxTheme.primaryText
-                        font.pixelSize: Theme.fontSizeLarge
-                        font.family: FiatLuxTheme.serif; font.italic: true
-                        width: parent.width - isoTag.width
-                        elide: Text.ElideRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Rectangle {
-                        id: isoTag
-                        radius: height / 2; color: FiatLuxTheme.amberSoft
-                        border.color: FiatLuxTheme.amber; border.width: 1
-                        width: isoL.width + Theme.paddingMedium * 2
-                        height: isoL.height + Theme.paddingSmall * 1.5
-                        anchors.verticalCenter: parent.verticalCenter
-                        Text {
-                            id: isoL; anchors.centerIn: parent
-                            text: "ISO " + model.boxIso; color: FiatLuxTheme.amber
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                            font.family: FiatLuxTheme.mono
-                        }
-                    }
-                }
+                truncationMode: TruncationMode.Fade
+                text: model.name
+                color: FiatLuxTheme.primaryText
+                font.pixelSize: Theme.fontSizeLarge
+                font.family: FiatLuxTheme.serif
+                font.italic: true
+            }
+            Label {
+                id: isoLabel
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.horizontalPageMargin
+                anchors.verticalCenter: parent.verticalCenter
+                text: "ISO " + model.boxIso
+                color: FiatLuxTheme.secondaryText
+                font.pixelSize: Theme.fontSizeSmall
             }
         }
-    }
 
+        VerticalScrollDecorator { }
+    }
 }

@@ -10,21 +10,12 @@ import "../components"
 // its shots stay in the log.
 //
 // The film list folds away once a film is chosen, so the speed and the load
-// button come up under it instead of below fifty other films.
+// button come up under it instead of below fifty other films. "change" brings
+// the list back.
 
 Page {
     id: page
     allowedOrientations: Orientation.Portrait
-
-    Rectangle {
-        anchors.fill: parent
-        z: -1
-        visible: !FiatLuxTheme.ambient
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: FiatLuxTheme.backgroundHigh }
-            GradientStop { position: 1.0; color: FiatLuxTheme.backgroundLow }
-        }
-    }
 
     function paint() { FiatLuxTheme.applyPalette(page) }
     Connections {
@@ -141,6 +132,20 @@ Page {
         return stops > 0 ? qsTr("push %1").arg(n) : qsTr("pull %1").arg(n)
     }
 
+    readonly property var speedChoices: [
+        { label: qsTr("pull 1"), value: 0.5 }, { label: qsTr("box"), value: 1 },
+        { label: qsTr("push 1"), value: 2 }, { label: qsTr("push 2"), value: 4 } ]
+
+    readonly property var currentFactor: {
+        if (!page.film) return null
+        var iso = parseInt(isoField.text)
+        for (var i = 0; i < page.speedChoices.length; i++) {
+            var k = page.speedChoices[i].value
+            if (iso === Math.round(page.film.boxIso * k)) return k
+        }
+        return null
+    }
+
     function loadFilm() {
         var stockId = film.id >= 0 ? film.id : Storage.ensureStock(film.name, film.boxIso)
         Storage.closeRollsForCamera(cameraId)
@@ -164,7 +169,7 @@ Page {
             id: star
             property bool on: false
             property color fill: FiatLuxTheme.accent
-            property color line: FiatLuxTheme.pillBorder
+            property color line: FiatLuxTheme.secondaryText
             width: Theme.iconSizeSmall
             height: width
             onOnChanged: requestPaint()
@@ -196,6 +201,8 @@ Page {
         }
     }
 
+    PaperBackground { }
+
     SilicaFlickable {
         anchors.fill: parent
         contentHeight: column.height + Theme.paddingLarge
@@ -203,7 +210,6 @@ Page {
         Column {
             id: column
             width: page.width
-            spacing: Theme.paddingLarge
 
             PageHead {
                 title: qsTr("load film")
@@ -216,8 +222,9 @@ Page {
                 width: parent.width
                 label: qsTr("into")
                 enabled: app.cameraModel.count > 0
+                value: currentIndex < 0 ? (app.cameraModel.count > 0 ? qsTr("choose") : qsTr("no cameras")) : (currentItem ? currentItem.text : "")
                 description: app.cameraModel.count === 0
-                             ? qsTr("No cameras yet. Add one from Cameras in the pull-down menu.") : ""
+                             ? qsTr("Add a camera first, from Cameras in the pull-down menu.") : ""
                 menu: ContextMenu {
                     highlightColor: FiatLuxTheme.accent
                     Repeater {
@@ -231,208 +238,6 @@ Page {
                 }
             }
 
-            // ---- film ----
-            CardSection {
-                title: qsTr("film")
-
-                // Chosen: the film, and the way back to the list.
-                Item {
-                    visible: page.film !== null
-                    width: parent.width
-                    height: Math.max(chosenName.height, changeBtn.height)
-
-                    Text {
-                        id: chosenName
-                        anchors.left: parent.left
-                        anchors.right: changeBtn.left
-                        anchors.rightMargin: Theme.paddingMedium
-                        anchors.verticalCenter: parent.verticalCenter
-                        wrapMode: Text.Wrap
-                        text: page.film ? page.film.name + "  ·  ISO " + page.film.boxIso : ""
-                        color: FiatLuxTheme.accent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif; font.italic: true
-                    }
-
-                    BackgroundItem {
-                        id: changeBtn
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: changeText.implicitWidth + Theme.paddingLarge * 2
-                        height: Theme.itemSizeExtraSmall
-                        highlightedColor: FiatLuxTheme.highlightWash
-                        onClicked: page.film = null
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: height / 2
-                            color: FiatLuxTheme.pillFill
-                            border.color: FiatLuxTheme.pillBorder
-                            border.width: 1
-                        }
-                        Text {
-                            id: changeText
-                            anchors.centerIn: parent
-                            text: qsTr("change")
-                            color: FiatLuxTheme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
-                }
-
-                // Not chosen yet: search and the list.
-                Column {
-                    visible: page.film === null
-                    width: parent.width
-                    spacing: 0
-
-                    SearchField {
-                        id: searchField
-                        width: parent.width + Theme.paddingLarge * 2
-                        x: -Theme.paddingLarge
-                        placeholderText: qsTr("search films")
-                        color: FiatLuxTheme.primaryText
-                        onTextChanged: page.query = text
-                    }
-
-                    Repeater {
-                        model: page.film === null ? page.rows : []
-                        delegate: Column {
-                            width: parent.width
-
-                            Text {
-                                visible: modelData.section !== ""
-                                height: visible ? implicitHeight + Theme.paddingMedium : 0
-                                verticalAlignment: Text.AlignBottom
-                                text: modelData.section
-                                color: FiatLuxTheme.secondaryText
-                                font.pixelSize: Theme.fontSizeExtraSmall
-                                font.family: FiatLuxTheme.serif; font.italic: true
-                            }
-
-                            BackgroundItem {
-                                id: filmRow
-                                width: parent.width
-                                height: Theme.itemSizeSmall
-                                highlightedColor: FiatLuxTheme.highlightWash
-                                onClicked: page.chooseFilm(modelData.f)
-
-                                Text {
-                                    anchors.left: parent.left
-                                    anchors.right: isoText.left
-                                    anchors.rightMargin: Theme.paddingMedium
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    elide: Text.ElideRight
-                                    text: modelData.f.name
-                                    color: FiatLuxTheme.primaryText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                }
-                                Text {
-                                    id: isoText
-                                    anchors.right: favBtn.left
-                                    anchors.rightMargin: Theme.paddingMedium
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: modelData.f.boxIso
-                                    color: FiatLuxTheme.secondaryText
-                                    font.pixelSize: Theme.fontSizeExtraSmall
-                                }
-
-                                MouseArea {
-                                    id: favBtn
-                                    anchors.right: parent.right
-                                    width: Theme.itemSizeExtraSmall
-                                    height: parent.height
-                                    onClicked: page.toggleFavourite(modelData.f)
-                                    Loader {
-                                        anchors.centerIn: parent
-                                        sourceComponent: starMark
-                                        onLoaded: item.on = Qt.binding(function() { return modelData.f.favourite })
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    BackgroundItem {
-                        width: parent.width
-                        height: Theme.itemSizeSmall
-                        highlightedColor: FiatLuxTheme.highlightWash
-                        onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"))
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: qsTr("+ add a film that isn't listed")
-                            color: FiatLuxTheme.accent
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: FiatLuxTheme.serif; font.italic: true
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        text: qsTr("Tap the star to keep a film among your favourites.")
-                        color: FiatLuxTheme.secondaryText
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                    }
-                }
-            }
-
-            // ---- speed ----
-            CardSection {
-                visible: page.film !== null
-                title: qsTr("shoot at")
-                Row {
-                    width: parent.width
-                    spacing: Theme.paddingMedium
-                    TextField {
-                        id: isoField
-                        width: Theme.itemSizeHuge
-                        label: qsTr("ISO")
-                        color: FiatLuxTheme.primaryText
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        maximumLength: 5
-                        validator: IntValidator { bottom: 1; top: 99999 }
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: page.stopsLabel(parseInt(isoField.text))
-                        color: FiatLuxTheme.secondaryText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: FiatLuxTheme.serif; font.italic: true
-                    }
-                }
-                Flow {
-                    width: parent.width
-                    spacing: Theme.paddingSmall
-                    Repeater {
-                        model: [ { l: qsTr("pull 1"), k: 0.5 }, { l: qsTr("box"), k: 1 },
-                                 { l: qsTr("push 1"), k: 2 }, { l: qsTr("push 2"), k: 4 } ]
-                        delegate: BackgroundItem {
-                            id: speedPill
-                            width: spText.implicitWidth + Theme.paddingLarge * 2
-                            height: spText.implicitHeight + Theme.paddingMedium * 1.5
-                            highlightedColor: "transparent"
-                            readonly property bool on: page.film !== null
-                                                       && parseInt(isoField.text) === Math.round(page.film.boxIso * modelData.k)
-                            onClicked: if (page.film) isoField.text = Math.round(page.film.boxIso * modelData.k).toString()
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: height / 2
-                                color: speedPill.on || speedPill.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                                border.color: speedPill.on ? FiatLuxTheme.pillBorderActive : FiatLuxTheme.pillBorder
-                                border.width: 1
-                            }
-                            Text {
-                                id: spText
-                                anchors.centerIn: parent
-                                text: modelData.l
-                                color: speedPill.on ? FiatLuxTheme.accent : FiatLuxTheme.primaryText
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                        }
-                    }
-                }
-            }
-
             // ---- lens (interchangeable only) ----
             ComboBox {
                 id: lensCombo
@@ -440,8 +245,9 @@ Page {
                 width: parent.width
                 label: qsTr("lens")
                 enabled: page.compatLenses.length > 0
+                value: currentIndex < 0 ? (page.compatLenses.length > 0 ? qsTr("choose") : qsTr("none yet")) : (currentItem ? currentItem.text : "")
                 description: page.compatLenses.length === 0
-                             ? qsTr("No lenses with the mount “%1” yet. You can load the film now and add lenses later.").arg(page.cameraMount)
+                             ? qsTr("No lenses with the mount \u201c%1\u201d yet. Load the film now and add lenses later.").arg(page.cameraMount)
                              : ""
                 menu: ContextMenu {
                     highlightColor: FiatLuxTheme.accent
@@ -456,25 +262,169 @@ Page {
                 }
             }
 
-            BackgroundItem {
-                id: loadBtn
-                width: parent.width; height: Theme.itemSizeLarge
-                enabled: page.canLoad
-                opacity: enabled ? 1.0 : 0.35
-                onClicked: page.loadFilm()
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width - 2 * Theme.horizontalPageMargin
-                    height: Theme.itemSizeMedium; radius: Theme.paddingLarge
-                    color: loadBtn.highlighted ? FiatLuxTheme.amberStrong : FiatLuxTheme.amber
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("load film")
-                        color: FiatLuxTheme.onAccent
-                        font.pixelSize: Theme.fontSizeMedium
-                        font.family: FiatLuxTheme.serif; font.italic: true; font.bold: true
+            // ---- film ----
+            SectionTitle {
+                text: qsTr("film")
+            }
+
+            // Chosen: the film, and the way back to the list.
+            Item {
+                visible: page.film !== null
+                x: Theme.horizontalPageMargin
+                width: parent.width - Theme.horizontalPageMargin * 2
+                height: Math.max(chosenName.height, changeLink.height)
+
+                Label {
+                    id: chosenName
+                    anchors.left: parent.left
+                    anchors.right: changeLink.left
+                    anchors.rightMargin: Theme.paddingMedium
+                    anchors.verticalCenter: parent.verticalCenter
+                    wrapMode: Text.Wrap
+                    text: page.film ? page.film.name + "  \u00b7  ISO " + page.film.boxIso : ""
+                    color: FiatLuxTheme.accent
+                    font.pixelSize: Theme.fontSizeMedium
+                    font.family: FiatLuxTheme.serif
+                    font.italic: true
+                }
+
+                LinkText {
+                    id: changeLink
+                    anchors.right: parent.right
+                    anchors.rightMargin: -Theme.paddingSmall
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("change")
+                    onClicked: page.film = null
+                }
+            }
+
+            // Not chosen yet: search and the list.
+            Column {
+                visible: page.film === null
+                width: parent.width
+
+                SearchField {
+                    id: searchField
+                    width: parent.width
+                    placeholderText: qsTr("search films")
+                    color: FiatLuxTheme.primaryText
+                    onTextChanged: page.query = text
+                }
+
+                Repeater {
+                    model: page.film === null ? page.rows : []
+                    delegate: Column {
+                        width: parent.width
+
+                        SectionTitle {
+                            visible: modelData.section !== ""
+                            text: modelData.section
+                            font.pixelSize: Theme.fontSizeExtraSmall
+                        }
+
+                        BackgroundItem {
+                            id: filmRow
+                            width: parent.width
+                            height: Theme.itemSizeSmall
+                            highlightedColor: FiatLuxTheme.highlightWash
+                            onClicked: page.chooseFilm(modelData.f)
+
+                            Label {
+                                anchors.left: parent.left
+                                anchors.leftMargin: Theme.horizontalPageMargin
+                                anchors.right: isoText.left
+                                anchors.rightMargin: Theme.paddingMedium
+                                anchors.verticalCenter: parent.verticalCenter
+                                truncationMode: TruncationMode.Fade
+                                text: modelData.f.name
+                                color: FiatLuxTheme.primaryText
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                            Label {
+                                id: isoText
+                                anchors.right: favBtn.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.f.boxIso
+                                color: FiatLuxTheme.secondaryText
+                                font.pixelSize: Theme.fontSizeExtraSmall
+                            }
+
+                            MouseArea {
+                                id: favBtn
+                                anchors.right: parent.right
+                                anchors.rightMargin: Theme.horizontalPageMargin - Theme.paddingMedium
+                                width: Theme.itemSizeExtraSmall
+                                height: parent.height
+                                onClicked: page.toggleFavourite(modelData.f)
+                                Loader {
+                                    anchors.centerIn: parent
+                                    sourceComponent: starMark
+                                    onLoaded: item.on = Qt.binding(function() { return modelData.f.favourite })
+                                }
+                            }
+                        }
                     }
                 }
+
+                LinkText {
+                    x: Theme.horizontalPageMargin - Theme.paddingSmall
+                    text: qsTr("+ a film that isn\u2019t listed")
+                    underline: false
+                    italic: true
+                    onClicked: pageStack.push(Qt.resolvedUrl("AddStockPage.qml"))
+                }
+
+                FormNote {
+                    text: qsTr("Tap the star to keep a film among your favourites.")
+                }
+            }
+
+            // ---- speed ----
+            SectionTitle {
+                visible: page.film !== null
+                text: qsTr("shoot at")
+            }
+
+            Row {
+                visible: page.film !== null
+                width: parent.width
+                TextField {
+                    id: isoField
+                    width: Theme.itemSizeHuge * 1.4
+                    label: qsTr("ISO")
+                    color: FiatLuxTheme.primaryText
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    maximumLength: 5
+                    validator: IntValidator { bottom: 1; top: 99999 }
+                    EnterKey.iconSource: "image://theme/icon-m-enter-close"
+                    EnterKey.onClicked: focus = false
+                }
+                Label {
+                    anchors.top: parent.top
+                    anchors.topMargin: Theme.paddingSmall
+                    text: page.stopsLabel(parseInt(isoField.text))
+                    color: FiatLuxTheme.secondaryText
+                    font.pixelSize: Theme.fontSizeMedium
+                    font.family: FiatLuxTheme.serif
+                    font.italic: true
+                }
+            }
+
+            WordChoice {
+                visible: page.film !== null
+                x: Theme.horizontalPageMargin - Theme.paddingSmall
+                width: parent.width - Theme.horizontalPageMargin * 2
+                choices: page.speedChoices
+                current: page.currentFactor
+                onChosen: if (page.film) isoField.text = Math.round(page.film.boxIso * value).toString()
+            }
+
+            Item { width: 1; height: Theme.paddingLarge * 2 }
+
+            FiatButton {
+                text: qsTr("load film")
+                enabled: page.canLoad
+                onClicked: page.loadFilm()
             }
 
             Item { width: 1; height: Theme.paddingLarge }

@@ -47,6 +47,13 @@ Page {
         return t.toFixed(1) + "\""
     }
 
+    function paint() { FiatLuxTheme.applyPalette(page) }
+    Component.onCompleted: paint()
+    Connections {
+        target: FiatLuxTheme
+        onAmbientChanged: page.paint()
+    }
+
     // Polled: on Sailfish the change signal of Qt.application.state does not
     // reliably arrive, and a binding on it latches.
     property int appState: Qt.ApplicationActive
@@ -73,12 +80,10 @@ Page {
                 subtitle: "fiat lux"
             }
 
-            // ---- what the camera sees ----
+            // ---- what the camera sees: the same square as the meter ----
             Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                height: width * 0.6
-                radius: FiatLuxTheme.cardRadius
+                width: parent.width
+                height: width
                 color: FiatLuxTheme.viewfinderBg
                 clip: true
 
@@ -86,101 +91,82 @@ Page {
                     id: meter
                     anchors.fill: parent
                     fill: true
+                    photos: false
                     active: page.status === PageStatus.Active
                             && page.appState === Qt.ApplicationActive
                 }
 
-                Label {
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: if (!meter.hasFrame) meter.restart()
+                }
+
+                Text {
                     anchors.centerIn: parent
-                    width: parent.width - Theme.paddingLarge * 2
+                    width: parent.width - Theme.horizontalPageMargin * 2
                     visible: !meter.hasFrame
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                     text: meter.errorString !== "" ? meter.errorString : qsTr("waking the camera")
-                    font.pixelSize: Theme.fontSizeExtraSmall
+                    font.pixelSize: meter.errorString !== "" ? Theme.fontSizeExtraSmall : Theme.fontSizeSmall
+                    font.family: meter.errorString !== "" ? Theme.fontFamily : FiatLuxTheme.serif
+                    font.italic: meter.errorString === ""
                     color: FiatLuxTheme.viewfinderText
+                    opacity: 0.75
                 }
             }
 
             // ---- the live reading ----
-            Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                height: readings.height + Theme.paddingLarge * 2
-                radius: FiatLuxTheme.cardRadius
-                color: FiatLuxTheme.card
-                border.color: FiatLuxTheme.cardBorder
-                border.width: FiatLuxTheme.cardBorderWidth
-
-                Column {
-                    id: readings
-                    anchors.centerIn: parent
-                    width: parent.width - Theme.paddingLarge * 2
-                    spacing: Theme.paddingSmall
-
-                    Label {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: meter.metered
-                              ? "f/" + meter.aperture.toFixed(2) + " · "
-                                + page.formatSeconds(meter.exposureTime) + " · ISO " + meter.iso
-                              : qsTr("no reading")
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: FiatLuxTheme.secondaryText
-                    }
-
-                    Label {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: isNaN(page.correctedEv) ? "—" : "EV " + page.correctedEv.toFixed(1)
-                        font.pixelSize: Theme.fontSizeExtraLarge
-                        font.family: FiatLuxTheme.serif
-                        color: FiatLuxTheme.primaryText
-                    }
-
-                    Label {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: isNaN(page.rawEv) ? "" : qsTr("camera says EV %1").arg(page.rawEv.toFixed(1))
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: FiatLuxTheme.secondaryText
-                    }
-                }
-            }
-
-            // ---- the constant ----
-            Item {
+            Column {
                 width: parent.width
-                height: Math.max(minusBtn.height, offsetLabel.height)
+                spacing: Theme.paddingSmall
 
-                BackgroundItem {
-                    id: minusBtn
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.horizontalPageMargin
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: minusBg.width
-                    height: minusBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
-                    onClicked: page.nudge(-1/3)
-                    Rectangle {
-                        id: minusBg
-                        radius: height / 2
-                        width: Theme.itemSizeSmall
-                        height: Theme.itemSizeExtraSmall
-                        color: minusBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        Label {
-                            anchors.centerIn: parent
-                            text: "−⅓"
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: FiatLuxTheme.primaryText
-                        }
-                    }
+                Label {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: meter.metered
+                          ? "f/" + meter.aperture.toFixed(2) + "  ·  "
+                            + page.formatSeconds(meter.exposureTime) + "  ·  ISO " + meter.iso
+                          : qsTr("no reading")
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    color: FiatLuxTheme.secondaryText
                 }
 
                 Label {
-                    id: offsetLabel
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: isNaN(page.correctedEv) ? "—" : "EV " + page.correctedEv.toFixed(1)
+                    font.pixelSize: Theme.fontSizeExtraLarge
+                    font.family: FiatLuxTheme.serif
+                    color: FiatLuxTheme.primaryText
+                }
+
+                Label {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: isNaN(page.rawEv) ? "" : qsTr("the camera says EV %1").arg(page.rawEv.toFixed(1))
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    color: FiatLuxTheme.secondaryText
+                }
+            }
+
+            // ---- the constant: −⅓  +4.00 stops  +⅓ ----
+            Item {
+                width: parent.width
+                height: Theme.itemSizeMedium
+
+                LinkText {
+                    anchors.left: parent.left
+                    anchors.leftMargin: Theme.horizontalPageMargin - Theme.paddingSmall
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Theme.itemSizeMedium
+                    text: "−⅓"
+                    underline: false
+                    fontSize: Theme.fontSizeLarge
+                    onClicked: page.nudge(-1/3)
+                }
+
+                Label {
                     anchors.centerIn: parent
                     text: (page.offset > 0 ? "+" : "") + page.offset.toFixed(2) + " " + qsTr("stops")
                     font.pixelSize: Theme.fontSizeLarge
@@ -188,30 +174,16 @@ Page {
                     color: FiatLuxTheme.accent
                 }
 
-                BackgroundItem {
-                    id: plusBtn
+                LinkText {
                     anchors.right: parent.right
-                    anchors.rightMargin: Theme.horizontalPageMargin
+                    anchors.rightMargin: Theme.horizontalPageMargin - Theme.paddingSmall
                     anchors.verticalCenter: parent.verticalCenter
-                    width: plusBg.width
-                    height: plusBg.height
-                    highlightedColor: FiatLuxTheme.highlightWash
+                    width: Theme.itemSizeMedium
+                    horizontalAlignment: Text.AlignRight
+                    text: "+⅓"
+                    underline: false
+                    fontSize: Theme.fontSizeLarge
                     onClicked: page.nudge(1/3)
-                    Rectangle {
-                        id: plusBg
-                        radius: height / 2
-                        width: Theme.itemSizeSmall
-                        height: Theme.itemSizeExtraSmall
-                        color: plusBtn.highlighted ? FiatLuxTheme.pillFillActive : FiatLuxTheme.pillFill
-                        border.color: FiatLuxTheme.pillBorder
-                        border.width: 1
-                        Label {
-                            anchors.centerIn: parent
-                            text: "+⅓"
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: FiatLuxTheme.primaryText
-                        }
-                    }
                 }
             }
 
@@ -230,30 +202,17 @@ Page {
 
             // ---- how ----
 
-            Label {
-                x: Theme.horizontalPageMargin
-                width: parent.width - Theme.horizontalPageMargin * 2
-                wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeExtraSmall
-                color: FiatLuxTheme.secondaryText
-                text: qsTr("Fill the frame with a matte mid-grey surface in even light. Meter the same surface with a reflected meter you trust, set to the same film speed, and compare its EV with the one above.\n\nIf this phone reads higher than your meter, it thinks the scene is brighter than it is, and the number below should be negative by the difference.")
+            FormNote {
+                text: qsTr("Fill the frame with a matte mid-grey surface in even light. Meter the same surface with a reflected meter you trust, set to the same film speed, and compare its EV with the one above.\n\nIf this phone reads higher than your meter, it thinks the scene is brighter than it is, and the number above should come down by the difference.")
+            }
+
+            LinkText {
+                x: Theme.horizontalPageMargin - Theme.paddingSmall
+                text: qsTr("reset to +4.00, measured on the Jolla Phone (2026)")
+                onClicked: cfgCalibration.value = 4.0
             }
 
             Item { width: 1; height: Theme.paddingMedium }
-
-            BackgroundItem {
-                width: parent.width
-                height: Theme.itemSizeSmall
-                highlightedColor: FiatLuxTheme.highlightWash
-                onClicked: cfgCalibration.value = 4.0
-                Label {
-                    x: Theme.horizontalPageMargin
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("Reset to +4.00, measured on this phone")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: FiatLuxTheme.accent
-                }
-            }
         }
 
         VerticalScrollDecorator { }
