@@ -3,6 +3,7 @@ Summary:    Light meter for film photography
 Version:    1.0
 Release:    1
 License:    MIT
+ExclusiveArch:  aarch64
 URL:        https://github.com/munksh/FiatLux
 Source0:    %{name}-%{version}.tar.bz2
 Requires:   sailfishsilica-qt5 >= 0.10.9
