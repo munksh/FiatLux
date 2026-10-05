@@ -343,44 +343,40 @@ Page {
                     { name: "fiat lux", what: qsTr("let there be light — this one"), icon: "images/family/harbour-fiatlux.png", url: "" },
                     { name: "fiat cor", what: qsTr("let there be heart — a metronome"), icon: "images/family/harbour-fiatcor.png", url: "https://openrepos.net/content/munkstolen/fiat-cor-a-metronome" },
                     { name: "fiat passus", what: qsTr("let there be step — a step counter - Coming soon"), icon: "images/family/harbour-fiatpassus.png", url: "" },
-                    { name: "fiat mos", what: qsTr("let there be habit — a habit tracker"), icon: "images/family/harbour-fiatmos.png", url: "https://openrepos.net/content/munkstolen/fiat-mos-habit-tracker" }
+                    { name: "fiat mos", what: qsTr("let there be habit — a habit tracker"), icon: "images/family/harbour-fiatmos.png", url: "https://openrepos.net/content/munkstolen/fiat-mos-habit-tracker" },
+                    { name: "fiat imago", what: qsTr("let there be image — a raw editor"), icon: "images/family/harbour-fiatimago.png", url: "https://openrepos.net/content/munkstolen/fiat-imago-raw-editor" },
+                    { name: "fiat ratio", what: qsTr("let there be reckoning — a budget tool"), icon: "images/family/harbour-fiatratio.png", url: "https://openrepos.net/content/munkstolen/fiat-ratio-budget-tool" }
                 ]
 
+                // A full-size icon in a row of its own height, rather than an
+                // icon shrunk to the height of two lines of text. The icon is
+                // the app's face; it should be readable.
                 delegate: BackgroundItem {
-                    id: familyRow
-                    x: Theme.horizontalPageMargin
-                    width: content.width - Theme.horizontalPageMargin * 2
-                    height: familyText.height
+                    width: content.width
+                    height: Theme.itemSizeMedium
                     enabled: modelData.url !== ""
                     highlightedColor: FiatLuxTheme.highlightWash
                     onClicked: Qt.openUrlExternally(modelData.url)
 
-                    // A cap, not a measurement of familyText: sizing the icon
-                    // from the text's height while the text's width comes
-                    // from the icon's width would make each depend on the
-                    // other, and QML gives no guarantee a loop like that
-                    // settles. Every "what" line here is one short sentence,
-                    // so in practice this cap and the real name+what height
-                    // match; if one ever wraps past it the icon just stops
-                    // growing with it instead of the layout misbehaving.
-                    readonly property real iconSlot: Theme.itemSizeSmall
-
                     Image {
-                        anchors.left: parent.left
+                        id: familyIcon
+                        x: Theme.horizontalPageMargin
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(familyText.height, familyRow.iconSlot)
-                        height: width
-                        source: Qt.resolvedUrl(modelData.icon)
+                        width: Theme.itemSizeSmall
+                        height: Theme.itemSizeSmall
+                        sourceSize.width: Theme.itemSizeSmall
+                        sourceSize.height: Theme.itemSizeSmall
                         fillMode: Image.PreserveAspectFit
                         smooth: true
-                        opacity: modelData.url !== "" ? 1.0 : 0.55
+                        source: Qt.resolvedUrl(modelData.icon)
                     }
 
                     Column {
-                        id: familyText
-                        anchors.left: parent.left
-                        anchors.leftMargin: familyRow.iconSlot + Theme.paddingMedium
+                        anchors.left: familyIcon.right
+                        anchors.leftMargin: Theme.paddingLarge
                         anchors.right: parent.right
+                        anchors.rightMargin: Theme.horizontalPageMargin
+                        anchors.verticalCenter: parent.verticalCenter
 
                         Label {
                             width: parent.width
@@ -402,15 +398,6 @@ Page {
             }
 
             Item { width: 1; height: Theme.paddingMedium }
-
-            Label {
-                x: Theme.horizontalPageMargin
-                width: parent.width - Theme.horizontalPageMargin * 2
-                wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeTiny
-                color: FiatLuxTheme.secondaryText
-                text: qsTr("Small instruments that each do one thing and leave the rest alone. They share a look, a palette and a stubbornness about staying on your own phone.")
-            }
 
             // -- Version ---------------------------------------------------
             //

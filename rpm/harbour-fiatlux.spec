@@ -26,6 +26,29 @@ BuildRequires:  desktop-file-utils
 A light meter for analogue film photography. It meters the light and offers
 exposure pairs matched to the cameras, lenses and film you actually own.
 
+%if 0%{?_chum}
+Title: Fiat Lux
+Type: desktop-application
+DeveloperName: Munkstolen
+Categories:
+ - Graphics
+ - Photography
+PackageIcon: https://munkstolen.se/SFOS/harbour-fiatlux.png
+Screenshots:
+ - https://munkstolen.se/SFOS/fiatlux1.png
+ - https://munkstolen.se/SFOS/fiatlux2.png
+ - https://munkstolen.se/SFOS/fiatlux3.png
+ - https://munkstolen.se/SFOS/fiatlux4.png
+ - https://munkstolen.se/SFOS/fiatlux5.png
+ - https://munkstolen.se/SFOS/fiatlux6.png
+ - https://munkstolen.se/SFOS/fiatlux7.png
+Custom:
+  Repo: https://github.com/munksh/FiatLux
+Links:
+  Homepage: https://github.com/munksh/FiatLux
+  Bugtracker: https://github.com/munksh/FiatLux/issues
+%endif
+
 %prep
 %setup -q -n %{name}-%{version}
 
